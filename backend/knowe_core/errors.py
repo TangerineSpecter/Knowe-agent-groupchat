@@ -80,6 +80,13 @@ class ProviderAuthError(ProviderError):
     """Authentication failed (401)."""
 
 
+class ProviderQuotaError(ProviderError):
+    """Quota/balance exhausted (402). Retryable=False: no point retrying a dead account.
+
+    [v1.0.39.3] 主/辅路由池捕获此错误 → 切换下一个候选绑定（on_quota_exhausted 回调）。
+    """
+
+
 class ProviderRateLimitError(ProviderError):
     """Rate limited (429). Retry with backoff."""
 

@@ -273,3 +273,79 @@ html.dark {
 .set-update-hint.set-update-error { color: var(--danger); }
 /* [v1.0.26.2] 「当前已是最新版本」提示：绿色系，与 error 红色区分 */
 .set-update-hint.set-update-up-to-date { color: var(--success, #2e9e5b); }
+
+/* ── [v1.0.39.3] 多模型预存切换 · 模型与提供方 ──
+   demo 定稿（ui-demo/模型与提供方_demo_v2.html）的样式落到真实项目。
+   ★ 三块（填配置/路由池/清单）等宽随窗口自适应：给模型区块单开容器类 .set-block-pool
+     突破旧 .set-block 的 max-width:560px（该上限被账号/通知/外观等共用，不能全局改）。 */
+.set-block-pool { max-width: none; margin-bottom: var(--space-8); }
+.set-block-pool h4 { font-size: 12px; font-weight: 600; color: var(--ink-3); letter-spacing: .02em; margin-bottom: var(--space-3); }
+
+/* 填配置卡（.set-note 已有）——复用 .mset 行式；标签列固定宽、输入框随窗口拉长 */
+.set-block-pool .mset .set-item + .set-item { border-top: 1px solid var(--hairline); }
+.set-block-pool .mset-field { min-width: 0; max-width: none; }
+.set-block-pool .mset-select { min-width: 0; max-width: none; }
+.set-block-pool .mset .set-ctrl { flex: 1 1 auto; min-width: 0; padding-right: var(--space-6); }
+.set-block-pool .mset .si-body { flex: 0 0 132px; min-width: 132px; }
+.set-block-pool .mset .si-t { font-size: 14px; line-height: 20px; color: var(--ink); overflow-wrap: anywhere; }
+.set-block-pool .mset .si-d { font-size: 12px; line-height: 18px; color: var(--ink-3); margin-top: 1px; overflow-wrap: anywhere; }
+.set-block-pool .mset .set-ctrl { flex: 1 1 auto; min-width: 0; }
+
+/* 路由池条 */
+.pool-bar { border: 1px solid var(--hairline); border-radius: var(--r-md, 10px); background: var(--surface, #fff); padding: var(--space-4); }
+.pool-bar h4 { font-size: 12px; font-weight: 600; color: var(--ink-3); letter-spacing: .02em; margin-bottom: var(--space-3); }
+.pool-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; margin-bottom: var(--space-2); }
+.pool-label { font-weight: 600; color: var(--ink); min-width: 64px; font-size: 13px; }
+.pool-items { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; color: var(--ink-2); font-size: 13px; }
+.pool-item { background: var(--accent-tint, #eceef4); border: 1px solid rgba(75,90,140,.16); color: var(--accent, #4b5a8c); padding: 3px 9px; border-radius: 16px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.pool-arrow { color: var(--ink-3); font-size: 12px; }
+.pool-note { font-size: 12px; color: var(--ink-3); margin-top: var(--space-2); line-height: 18px; }
+.pool-note .tip { color: var(--accent); }
+.pool-note b { font-weight: 600; color: var(--ink-2); }
+.pool-empty { color: var(--ink-3); font-size: 12px; font-style: italic; }
+
+/* 已存模型清单表格（table-card 全宽，容纳 6 列） */
+.table-card { border: 1px solid var(--hairline); border-radius: var(--r-md, 10px); overflow: hidden; box-shadow: 0 1px 2px rgba(33,31,28,.04); }
+.table-card .tc-head { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-4) var(--space-3); }
+.table-card .tc-head h4 { font-size: 14px; font-weight: 600; color: var(--ink); letter-spacing: 0; margin: 0; }
+.table-card .tc-head .tc-count { font-size: 12px; color: var(--ink-3); }
+.table-card .tc-head .check-all { margin-left: auto; flex: none; flex-shrink: 0; }
+.table-wrap { overflow-x: auto; }
+.table-card table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table-card thead th { text-align: left; padding: var(--space-2) var(--space-4); font-size: 11px; font-weight: 600; color: var(--ink-3); letter-spacing: .04em; text-transform: uppercase; background: var(--surface-2, #f4f3ef); border-bottom: 1px solid var(--hairline); white-space: nowrap; }
+.table-card tbody tr { border-top: 1px solid var(--hairline); }
+.table-card tbody tr:hover { background: var(--surface-2, #f4f3ef); }
+.table-card td { padding: var(--space-2) var(--space-4); white-space: nowrap; }
+.table-card td.provider { font-weight: 600; color: var(--ink); }
+.table-card td.model { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; color: var(--ink-2); max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.table-card td.baseurl { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; color: var(--ink-3); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.table-card td.apikey { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; color: var(--ink-3); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-card td.sw-cell { text-align: center; }
+.table-card .conn-cell { text-align: center; width: 44px; }
+.conn-dot { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; font-size: 12px; font-weight: 700; line-height: 1; user-select: none; }
+.conn-dot.ok { color: var(--success, #3f7a5b); background: var(--success-bg, #eef4f0); }
+.conn-dot.fail { color: var(--danger, #a9564e); background: var(--danger-bg, #f6ecea); }
+.conn-dot.testing { color: var(--ink-3); background: var(--surface-2, #f4f3ef); }
+.conn-dot.idle { color: var(--ink-3); background: var(--surface-2, #f4f3ef); }
+.empty-row { text-align: center; padding: var(--space-8) var(--space-4); color: var(--ink-3); font-size: 13px; }
+
+/* 已存模型清单标题右侧：全量连接测试按钮（宽度贴文字，不撑满） */
+.check-all { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: fit-content; flex: none; height: 30px; padding: 0 12px; border-radius: var(--r-sm, 8px); font-size: 12px; font-weight: 600; color: var(--ink); background: var(--surface-2, #f4f3ef); border: 1px solid var(--hairline); cursor: pointer; transition: background .2s, color .2s; white-space: nowrap; }
+.check-all:hover { background: var(--surface-sunken, #f1efea); color: var(--ink); }
+.check-all:active { transform: translateY(1px); }
+.check-all:disabled { opacity: .5; cursor: default; transform: none; }
+
+/* 使用中/闲置中 胶囊 —— 恒定尺寸（min-width + 居中） */
+.sw-pill { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 78px; height: 26px; padding: 0 10px; border-radius: 20px; font-size: 12px; font-weight: 600; letter-spacing: .01em; white-space: nowrap; transition: background .2s, color .2s; cursor: pointer; user-select: none; }
+.sw-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.sw-pill.on { background: var(--success-bg, #eef4f0); color: var(--success, #3f7a5b); }
+.sw-pill.off { background: var(--surface-2, #f4f3ef); color: var(--ink-3); }
+.sw-pill:hover { filter: brightness(.97); }
+
+/* 操作图标按钮 */
+.table-card .actions { display: flex; gap: 4px; justify-content: flex-end; }
+.table-card .icon-btn { width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--hairline); background: var(--surface-2, #f4f3ef); color: var(--ink-2); font-size: 13px; display: inline-flex; align-items: center; justify-content: center; transition: background .2s, color .2s; }
+.table-card .icon-btn:hover { background: var(--surface-sunken, #f1efea); color: var(--ink); }
+.table-card .icon-btn.del:hover { background: var(--danger-bg, #f6ecea); color: var(--danger, #a9564e); border-color: transparent; }
+.table-card .icon-btn:disabled { opacity: .35; cursor: default; }
+

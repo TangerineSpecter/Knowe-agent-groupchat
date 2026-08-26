@@ -20,10 +20,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { BackendStatus, UpdateStatus } from '../shared/bridge';
 import { useKnoweStore } from '../store/store';
 import {
-  useSettingsStore, testModelConnection, effectiveAuxBinding,
-  APPROVAL_TIMEOUT_OPTIONS, type ModelApplyResult, type TestResult,
+  useSettingsStore, testModelConnection, testBinding,
+  APPROVAL_TIMEOUT_OPTIONS, type ModelApplyResult,
+  type ModelBinding,
 } from '../store/settings';
-import { providerLabel } from '../store/modelCatalog';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import ModelBindingModule from './ModelBindingModule';
@@ -295,191 +295,230 @@ const AccountPane: React.FC = () => {
 
 const ModelsPane: React.FC = () => {
   const { t } = useTranslation();
-  const mainModel = useSettingsStore((s) => s.mainModel);
-  const auxModel = useSettingsStore((s) => s.auxModel);
-  const saveMainModel = useSettingsStore((s) => s.saveMainModel);
-  const editMainModel = useSettingsStore((s) => s.editMainModel);
-  const saveAuxModel = useSettingsStore((s) => s.saveAuxModel);
-  const editAuxModel = useSettingsStore((s) => s.editAuxModel);
+  // [v1.0.39.3] 多模型预存：清单 + 主/辅池
+  const modelProfiles = useSettingsStore((s) => s.modelProfiles);
+  const mainPoolIdxs = useSettingsStore((s) => s.mainPoolIdxs);
+  const auxPoolIdxs = useSettingsStore((s) => s.auxPoolIdxs);
+  const addModelProfile = useSettingsStore((s) => s.addModelProfile);
+  const updateModelProfile = useSettingsStore((s) => s.updateModelProfile);
+  const removeModelProfile = useSettingsStore((s) => s.removeModelProfile);
+  const moveModelProfile = useSettingsStore((s) => s.moveModelProfile);
+  const toggleProfilePool = useSettingsStore((s) => s.toggleProfilePool);
+  const connState = useSettingsStore((s) => s.connState);
+  const testingAll = useSettingsStore((s) => s.testingAll);
+  const testAllConnections = useSettingsStore((s) => s.testAllConnections);
   const pushToBackend = useSettingsStore((s) => s.pushToBackend);
 
-  const [testTarget, setTestTarget] = useState<'main' | 'aux'>('main');
+  const [draft, setDraft] = useState<Omit<ModelBinding, 'sealed'> | null>(null);
   const [testing, setTesting] = useState(false);
-  const [result, setResult] = useState<TestResult | null>(null);
   const testRunId = useRef(0);
 
-  /**
-   * 连接测试结果只对“发起测试那一刻”的绑定有效。
-   *
-   * 旧实现保存新厂商后仍保留上一次的绿色/红色结果；更隐蔽的是，若切换发生在请求
-   * 途中，旧请求回来还会覆盖新配置旁边的状态。用 run id 同时清掉旧结果并废弃在途回包。
-   */
   const invalidateTestResult = (): void => {
     testRunId.current += 1;
     setTesting(false);
-    setResult(null);
   };
 
-  useEffect(() => {
-    testRunId.current += 1;
-    setTesting(false);
-    setResult(null);
-    // 每个字段都是连接测试输入；任一变化，旧结果都不再具有证明力。
-  }, [
-    mainModel?.provider, mainModel?.model, mainModel?.apiKey, mainModel?.hasApiKey,
-    mainModel?.clearApiKey, mainModel?.sealed,
-    auxModel?.provider, auxModel?.model, auxModel?.apiKey, auxModel?.hasApiKey,
-    auxModel?.clearApiKey, auxModel?.sealed,
-  ]);
+  // 保存一条（新增/编辑）：先测连接 —— 通过才加入清单，失败则不加入并提示原因。
+  const handleSave = async (b: { provider: string; model: string; apiKey: string; baseUrl?: string }): Promise<void> => {
+    if (testing) return;
+    const hasKey = Boolean(b.apiKey && b.apiKey.trim());
+    if (!hasKey) {
+      toast(i18n.t('settings.07'), 'warn');
+      return;
+    }
+    setTesting(true);
+    try {
+      // [v1.0.39.3] API Key 连接失败的模型不进列表：先测连接，通过才加入。
+      const test = await testBinding(b, 'main');
+      if (!test.ok) {
+        toast(test.message || i18n.t('settings.07'), 'warn');
+        return;
+      }
+      if (draft && draft.provider && draft.model) {
+        const idx = modelProfiles.findIndex((x) => x.provider === draft.provider && x.model === draft.model);
+        if (idx >= 0) updateModelProfile(idx, b);
+        else addModelProfile({ ...b, hasApiKey: hasKey });
+      } else {
+        addModelProfile({ ...b, hasApiKey: hasKey });
+      }
+      setDraft(null);
+      invalidateTestResult();
+      await pushToBackend().then((r) => {
+        toastApplyResult(r);
+        if (r.ok) void runTest();
+      });
+      // [v1.0.39.3] 模型刚加入/编辑成功后，自动对全列表做一次连接测试并刷新符号。
+      void testAllConnections();
+    } finally {
+      setTesting(false);
+    }
+  };
 
-  const runTest = async (target: 'main' | 'aux' = testTarget): Promise<void> => {
+  const applySaved = async (): Promise<void> => {
+    const r = await pushToBackend();
+    toastApplyResult(r);
+    if (r.ok) void runTest();
+  };
+
+  const runTest = async (): Promise<void> => {
     if (testing) return;
     const runId = testRunId.current + 1;
     testRunId.current = runId;
     setTesting(true);
-    setResult(null);
     try {
-      const r = await testModelConnection(target);
-      if (runId === testRunId.current) setResult(r);
+      await testModelConnection('main');
     } finally {
       if (runId === testRunId.current) setTesting(false);
     }
   };
 
-  const auxEffective = effectiveAuxBinding(mainModel, auxModel);
+  const mainPool = mainPoolIdxs
+    .map((i) => modelProfiles[i])
+    .filter((x): x is ModelBinding => Boolean(x));
+  const auxPool = auxPoolIdxs
+    .map((i) => modelProfiles[i])
+    .filter((x): x is ModelBinding => Boolean(x));
+
+  const poolLabel = (b: ModelBinding): string => `${b.provider}·${b.model}`;
+
+  // [v1.0.39.3] 连接状态列：绿勾=正常，红叉=有问题，灰点=待测/测试中。
+  const renderConnStatus = (state?: 'ok' | 'fail' | 'testing'): React.ReactNode => {
+    if (state === 'ok') {
+      return <span className="conn-dot ok" title={t('model.binding.module.preset.connOk')}>{'✓'}</span>;
+    }
+    if (state === 'fail') {
+      return <span className="conn-dot fail" title={t('model.binding.module.preset.connFail')}>{'✕'}</span>;
+    }
+    if (state === 'testing') {
+      return <span className="conn-dot testing" title={t('model.binding.module.preset.connTesting')}>{'…'}</span>;
+    }
+    // 未测过
+    return <span className="conn-dot idle" title={t('model.binding.module.preset.connIdle')}>{'·'}</span>;
+  };
+
+  // [v1.0.39.3] 路由池子项渲染：每个模型一个胶囊 + 间隔箭头（demo 一致）
+  const renderPool = (items: ModelBinding[]): React.ReactNode =>
+    items.length === 0 ? (
+      <span className="pool-empty">{t('model.binding.module.preset.empty')}</span>
+    ) : (
+      items.map((b, i) => (
+        <React.Fragment key={`${b.provider}-${b.model}-${i}`}>
+          {i > 0 && <span className="pool-arrow">→</span>}
+          <span className="pool-item">{poolLabel(b)}</span>
+        </React.Fragment>
+      ))
+    );
+
+  // [v1.0.39.3] 路由池提示语：主/辅都空与有内容两种状态（demo 一致）
+  const poolEmpty = mainPool.length === 0 && auxPool.length === 0;
 
   return (
     <>
-      <div className="set-block">
-        <h4>{t('global.search.01')}</h4>
-        <div className="set-note">{t('settings.view.14')}</div>
+      {/* [v1.0.39.3] 填配置卡：新增一条模型配置（进入模型清单）*/}
+      <div className="set-block set-block-pool">
+        <h4>{t('model.binding.module.preset.add')}</h4>
+        <div className="set-note">{t('model.binding.module.preset.note')}</div>
         <ModelBindingModule
-          binding={mainModel}
-          onSave={(b) => {
-            invalidateTestResult();
-            saveMainModel(b);
-            void pushToBackend().then((r) => {
-              toastApplyResult(r);
-              // v1.0.19.5: 保存即自动测试——用户无需手动点「测试」，结果直接展示。
-              if (r.ok) void runTest('main');
-            });
-          }}
-          onEdit={() => { invalidateTestResult(); editMainModel(); }}
+          binding={draft ? { ...draft, sealed: false } : null}
+          onSave={handleSave}
+          onEdit={() => { /* 新增态始终可编辑 */ }}
         />
-        {mainModel?.hasApiKey && !mainModel.apiKey && (
-          <div className="mset-key-status" role="status">
-            <span>{t('settings.view.01')}</span>
-            <button
-              type="button"
-              className="test-btn mset-key-clear"
-              onClick={() => {
-                invalidateTestResult();
-                saveMainModel({
-                  provider: mainModel.provider,
-                  model: mainModel.model,
-                  apiKey: '',
-                  hasApiKey: false,
-                  clearApiKey: true,
-                });
-                void pushToBackend().then(toastApplyResult);
-              }}
-            >
-              {t('settings.view.clearSavedKey')}
-            </button>
-          </div>
-        )}
       </div>
 
-      <div className="set-block">
-        <h4>{t('global.search.13')}</h4>
-        <ModelBindingModule
-          binding={auxModel}
-          followBinding={auxEffective}
-          followNote={t('settings.view.auxFollowNote')}
-          onSave={(b) => {
-            invalidateTestResult();
-            saveAuxModel(b);
-            void pushToBackend().then((r) => {
-              toastApplyResult(r);
-              // v1.0.19.5: 保存即自动测试。
-              if (r.ok) void runTest('aux');
-            });
-          }}
-          onEdit={() => { invalidateTestResult(); editAuxModel(); }}
-        />
-        {auxModel?.hasApiKey && !auxModel.apiKey && (
-          <div className="mset-key-status" role="status">
-            <span>{t('settings.view.01')}</span>
-            <button
-              type="button"
-              className="test-btn mset-key-clear"
-              onClick={() => {
-                invalidateTestResult();
-                saveAuxModel({
-                  provider: auxModel.provider,
-                  model: auxModel.model,
-                  apiKey: '',
-                  hasApiKey: false,
-                  clearApiKey: true,
-                });
-                void pushToBackend().then(toastApplyResult);
-              }}
-            >
-              {t('settings.view.clearSavedKey')}
-            </button>
+      {/* [v1.0.39.3] 路由池条 */}
+      <div className="set-block set-block-pool">
+        <div className="pool-bar">
+          <h4>{t('model.binding.module.preset.poolTitle')}</h4>
+          <div className="pool-row">
+            <span className="pool-label">{t('global.search.01')}</span>
+            <span id="pool-main" className="pool-items">
+              {renderPool(mainPool)}
+            </span>
           </div>
-        )}
-        <div className="set-note">
-          {t('settings.view.auxModelHint')}
-          {!auxModel?.sealed && auxEffective?.derived && (
-            t('settings.view.auxEffective', { provider: providerLabel(auxEffective.provider), model: auxEffective.model })
-          )}
-          。
+          <div className="pool-row">
+            <span className="pool-label">{t('global.search.13')}</span>
+            <span id="pool-aux" className="pool-items">
+              {renderPool(auxPool)}
+            </span>
+          </div>
+          <div className="pool-note">{poolEmpty ? t('model.binding.module.preset.alertEmpty') : t('model.binding.module.preset.routeHint')}</div>
         </div>
       </div>
 
-      <div className="set-block">
-        <h4>{t('settings.view.33')}</h4>
-        <SetItem t={t('settings.view.20')} d={t('settings.view.34')}>
-          <div className="mset-testrow">
-            <MSetSelect
-              value={testTarget}
-              options={[
-                { value: 'main' as const, label: t('global.search.01') },
-                { value: 'aux' as const, label: t('global.search.13') },
-              ]}
-              onChange={(v) => {
-                invalidateTestResult();
-                setTestTarget(v);
-              }}
-              ariaLabel={t('settings.view.20')}
-            />
-            <button type="button" className="test-btn" onClick={() => { void runTest(); }} disabled={testing}>
-              {t('contacts.view.21')}
+      {/* [v1.0.39.3] 已存清单表格 */}
+      <div className="set-block set-block-pool">
+        <div className="table-card">
+          <div className="tc-head">
+            <h4>{t('model.binding.module.preset.list')}</h4>
+            <span className="tc-count">{t('model.binding.module.preset.count', { n: modelProfiles.length })}</span>
+            <button
+              type="button"
+              className="check-all"
+              disabled={testingAll}
+              onClick={() => { void testAllConnections(); }}
+            >
+              {t('model.binding.module.preset.checkAll')}
             </button>
           </div>
-        </SetItem>
-        {/* [v0.44.5 Bug1] 结果/错误提示独占一整行、整块换行；不再挤进右侧控件列，
-            长错误文字（HTTP 401 等）也绝不会把左侧「测试目标」标签压成竖排。 */}
-        {(testing || result) && (
-          <div
-            className={'test-res-line' + (result ? (result.ok ? ' ok' : ' err') : '')}
-            role="status"
-            aria-live="polite"
-          >
-            {testing ? (
-              <>
-                <span className="spinner" aria-label={t('first.run.model.gate.01')} />
-                <span className="test-res-msg">{t('settings.view.16')}</span>
-              </>
-            ) : result ? (
-              <span className="test-res-msg">
-                {result.message}
-                {result.ok && result.latencyMs != null ? ` · ${result.latencyMs}ms` : ''}
-              </span>
-            ) : null}
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'center' }}>{t('model.binding.module.preset.conn')}</th>
+                  <th>{t('model.binding.module.provider')}</th>
+                  <th>{t('model.binding.module.model')}</th>
+                  <th>{t('model.binding.custom.baseUrl')}</th>
+                  <th>{t('model.binding.module.preset.apikey')}</th>
+                  <th style={{ textAlign: 'center' }}>{t('global.search.01')}</th>
+                  <th style={{ textAlign: 'center' }}>{t('global.search.13')}</th>
+                  <th style={{ textAlign: 'center' }}>{t('model.binding.module.ops')}</th>
+                </tr>
+              </thead>
+              <tbody id="profile-tbody">
+                {modelProfiles.length === 0 ? (
+                  <tr><td colSpan={8}><div className="empty-row">{t('model.binding.module.preset.noList')}</div></td></tr>
+                ) : modelProfiles.map((b, idx) => (
+                  <tr key={`${b.provider}-${b.model}-${idx}`}>
+                    <td className="conn-cell">
+                      {renderConnStatus(connState[`${b.provider}|${b.model}`])}
+                    </td>
+                    <td className="provider">{b.provider}</td>
+                    <td className="model">{b.model}</td>
+                    <td className="baseurl">{b.baseUrl ?? '—'}</td>
+                    <td className="apikey">{b.apiKeyMask || (b.hasApiKey ? t('model.binding.module.preset.mask') : t('model.binding.module.preset.noKey'))}</td>
+                    <td className="sw-cell">
+                      <button
+                        type="button"
+                        className={'sw-pill ' + (mainPoolIdxs.includes(idx) ? 'on' : 'off')}
+                        onClick={() => toggleProfilePool(idx, 'main')}
+                      >
+                        <span className="dot" />
+                        {mainPoolIdxs.includes(idx) ? t('model.binding.module.preset.on') : t('model.binding.module.preset.off')}
+                      </button>
+                    </td>
+                    <td className="sw-cell">
+                      <button
+                        type="button"
+                        className={'sw-pill ' + (auxPoolIdxs.includes(idx) ? 'on' : 'off')}
+                        onClick={() => toggleProfilePool(idx, 'aux')}
+                      >
+                        <span className="dot" />
+                        {auxPoolIdxs.includes(idx) ? t('model.binding.module.preset.on') : t('model.binding.module.preset.off')}
+                      </button>
+                    </td>
+                    <td>
+                      <div className="actions">
+                        <button type="button" className="icon-btn" disabled={idx === 0} onClick={() => moveModelProfile(idx, -1)}>↑</button>
+                        <button type="button" className="icon-btn" disabled={idx === modelProfiles.length - 1} onClick={() => moveModelProfile(idx, 1)}>↓</button>
+                        <button type="button" className="icon-btn del" onClick={() => { removeModelProfile(idx); void applySaved(); }}>✕</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        )}
+        </div>
       </div>
     </>
   );

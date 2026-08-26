@@ -34,6 +34,7 @@ from knowe_core.errors import (
     ProviderBadResponseError,
     ProviderConnectionError,
     ProviderError,
+    ProviderQuotaError,
     ProviderRateLimitError,
     ProviderTimeoutError,
 )
@@ -206,6 +207,9 @@ class ProviderClient:
         backoff_base: float = DEFAULT_BACKOFF_BASE,
         transport: str = "openai_chat",
         on_format_rejected=None,
+        # [v1.0.39.3] 主/辅路由池：捕获 402（配额用尽）时调用的回调，返回下一个候选绑定 dict。
+        #   返回 dict → 换绑定重发；返回 None → 无候选可切，照常抛错（报「额度不足」）。
+        on_quota_exhausted=None,
     ):
         normalized_base = base_url.rstrip("/")
         # HTTPX requires an absolute URL even when MockTransport intercepts the request.
@@ -226,6 +230,8 @@ class ProviderClient:
         #   （如 file 块不认）时，用回调把 messages 换格式后**单次重发**。
         #   默认 None = 老行为（不降级，直接抛错）。回调签名 (messages) -> messages。
         self._on_format_rejected = on_format_rejected
+        # [v1.0.39.3] 配额尽切换回调：签名 (exc) -> dict | None。
+        self._on_quota_exhausted = on_quota_exhausted
 
         self._headers = {
             "Content-Type": "application/json",
@@ -292,6 +298,25 @@ class ProviderClient:
     # Backward-compatible private name used by a few transport probes.
     def _new_client(self) -> httpx.AsyncClient:
         return self._get_client()
+
+    def _rebind(self, binding: dict[str, str]) -> None:
+        """[v1.0.39.3] 切到下一个候选绑定：更新 base_url/api_key/model/provider，并重置注入 client。
+
+        替换绑定后，下一次 _get_client() 会用新的连接参数。共享 client 池按 _pool_key
+        缓存（含 base_url），故重置 _pool_key 与 _injected_client，强制重建连接。
+        """
+        base = str(binding.get("base_url") or "").rstrip("/")
+        if base:
+            self.base_url = base
+        self.api_key = str(binding.get("api_key") or self.api_key)
+        if binding.get("model"):
+            self.model = str(binding["model"])
+        if binding.get("provider"):
+            self.provider = str(binding["provider"])
+        if binding.get("transport"):
+            self.transport = str(binding["transport"])
+        # 连接参数变了，旧的注入 client 作废（不能复用旧 base_url 的连接）。
+        self._injected_client = None
 
     async def aclose(self) -> None:
         """Close an injected client owned by this instance.
@@ -384,6 +409,22 @@ class ProviderClient:
                         emitted_event = True
                         yield event
                 return
+            except ProviderQuotaError as exc:
+                # [v1.0.39.3] 配额/余额用尽（402）→ 若有候选绑定，切下一个重发；无候选则抛错（报额度不足）。
+                if not emitted_event and self._on_quota_exhausted is not None:
+                    next_binding = self._on_quota_exhausted(exc)
+                    if isinstance(next_binding, dict) and next_binding:
+                        self._rebind(next_binding)
+                        # 换绑定后 base_url/api_key/model 都变了，重新构造请求体。
+                        body = self._build_stream_body(
+                            messages, tools, temperature, max_tokens, extra_body,
+                        )
+                        continue
+                raise exc.with_retry_context(
+                    attempts=attempt + 1,
+                    max_attempts=total_attempts,
+                    exhausted=True,
+                )
             except ProviderError as exc:
                 # [v1.0.39.2] 网关点名拒绝 file 块且配置了降级回调 → 换 text 块重发一次。
                 #   必须发生在任何输出之前（emitted_event=False），否则不降级。
@@ -693,8 +734,11 @@ class ProviderClient:
             )
         if code == 401:
             raise ProviderAuthError(message, 401, body, retryable=False)
-        if code in (402, 403):
-            raise ProviderError(message, code, body, retryable=False)
+        if code == 402:
+            # [v1.0.39.3] 402 = 配额/余额用尽 → 抛 ProviderQuotaError，供路由池捕获切换下一个候选。
+            raise ProviderQuotaError(message, 402, body, retryable=False)
+        if code == 403:
+            raise ProviderError(message, 403, body, retryable=False)
         if code == 429:
             raise ProviderRateLimitError(message, 429, body, retryable=True)
         if code >= 500:

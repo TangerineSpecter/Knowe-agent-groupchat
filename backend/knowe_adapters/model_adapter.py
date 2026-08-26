@@ -20,6 +20,7 @@ from backend.runtime import (
     ToolCall,
 )
 from knowe_core.provider_client import normalize_usage_buckets
+from backend import runtime_settings
 
 
 TextCallback = Callable[[str], Awaitable[None] | None]
@@ -101,6 +102,8 @@ class ProviderModelAdapter:
                     on_format_rejected=build_format_fallback(
                         provider, base_url, model,
                     ),
+                    # [v1.0.39.3] 主 Agent 配额用尽（402）→ 从主池找下一个候选切换。
+                    on_quota_exhausted=_build_quota_fallback(provider, model),
                 ),
                 **kwargs,
             )
@@ -404,6 +407,24 @@ class ProviderModelAdapter:
                 return result
         data = getattr(value, "__dict__", None)
         return data if isinstance(data, Mapping) else {}
+
+
+def _build_quota_fallback(provider: str, model: str, *, pool_key: str = "main_pool"):
+    """[v1.0.39.3] 构建「配额用尽切下一个候选」回调，供 ProviderClient 的 on_quota_exhausted 用。
+
+    闭包在每次 402 时从 runtime_settings 的主/辅池取**下一个**可用候选绑定
+    （provider/model 与当前不同），返回 dict；无候选返回 None（触发上层抛「额度不足」）。
+    """
+    def fallback(_exc):
+        candidates = runtime_settings._pool_candidates(pool_key)
+        for candidate in candidates:
+            if not candidate:
+                continue
+            if candidate.get("provider") == provider and candidate.get("model") == model:
+                continue
+            return candidate
+        return None
+    return fallback
 
 
 __all__ = [

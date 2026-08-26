@@ -107,6 +107,10 @@ def _default_state() -> dict[str, Any]:
         "language": "zh",                   # [v1.0.21.3] 主要语言：'zh' | 'en'（界面 + 提示词语言）
         "main_model": None,                 # {provider, model, api_key, base_url, transport}
         "aux_model": None,                  # 同上（前端已把「跟随主模型便宜档」派生好再发）
+        # [v1.0.39.3] 多模型预存切换：全部清单 + 主/辅池（池 = model_profiles 的下标列表，有序）
+        "model_profiles": [],               # [ {provider, model, api_key, base_url, transport}, ... ]
+        "main_pool": [],                    # 主池：model_profiles 下标，按序路由
+        "aux_pool": [],                     # 辅池：model_profiles 下标，按序路由
         "agent_models": {},                 # {"<project_id>::<agent_id>": binding}
         "approval_timeout_s": DEFAULT_APPROVAL_TIMEOUT_S,   # None = 永不
         "group_approval_timeouts": {},      # {project_id: seconds | None}
@@ -152,6 +156,14 @@ def _ensure_loaded() -> None:
             # new install starts without a binding and still requires test→apply.
             if raw.get("main_model") and "active_model_fingerprint" not in raw:
                 _state["active_model_fingerprint"] = binding_fingerprint(raw.get("main_model"))
+            # [v1.0.39.3] 旧数据迁移：只有单组 main/aux、无 model_profiles → 封装成清单一组 + 池首条。
+            # 老用户不丢配置，且新池路由从这组开始。
+            if not raw.get("model_profiles"):
+                migrated = _migrate_legacy_bindings(_state.get("main_model"), _state.get("aux_model"))
+                if migrated is not None:
+                    _state["model_profiles"] = migrated["model_profiles"]
+                    _state["main_pool"] = migrated["main_pool"]
+                    _state["aux_pool"] = migrated["aux_pool"]
             log.info(msg("runtime_settings.py.001"), path)
     except Exception as exc:  # noqa: BLE001 — settings.json 坏了不该拖死后端
         log.warning(msg("runtime_settings.py.002"), exc)
@@ -193,6 +205,80 @@ def _norm_binding(raw: Any) -> dict[str, str] | None:
         "base_url": str(raw.get("base_url") or "").rstrip("/"),
         "transport": str(raw.get("transport") or "openai_chat"),
     }
+
+
+def _norm_profiles(raw: Any) -> list[dict[str, str]]:
+    """[v1.0.39.3] 归一化整组模型清单：逐项 _norm_binding，剔除无效项。"""
+    if not isinstance(raw, list):
+        return []
+    profiles: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for item in raw:
+        binding = _norm_binding(item)
+        if binding is None:
+            continue
+        # 去重：同 provider/base_url/transport/model 只保留首次出现的（保序）。
+        key = (
+            binding["provider"].strip().casefold(),
+            binding["base_url"].strip().rstrip("/").casefold(),
+            binding["transport"].strip().casefold(),
+            binding["model"].strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        profiles.append(binding)
+    return profiles
+
+
+def _norm_pool(raw: Any, profile_count: int) -> list[int]:
+    """[v1.0.39.3] 归一化主/辅池：只保留合法下标、去重、保序。"""
+    if not isinstance(raw, list):
+        return []
+    pool: list[int] = []
+    seen: set[int] = set()
+    for item in raw:
+        try:
+            idx = int(item)
+        except (TypeError, ValueError):
+            continue
+        if idx < 0 or idx >= profile_count:
+            continue
+        if idx in seen:
+            continue
+        seen.add(idx)
+        pool.append(idx)
+    return pool
+
+
+def _migrate_legacy_bindings(
+    main_model: Any,
+    aux_model: Any,
+) -> dict[str, Any] | None:
+    """[v1.0.39.3] 把旧单组 main/aux 迁移成 model_profiles + 主/辅池。
+
+    返回 {model_profiles, main_pool, aux_pool}；无任何有效绑定时返回 None。
+    老用户只有 main_model → 清单一组、main_pool=[0]、aux_pool 看有无显式 aux。
+    """
+    main = _norm_binding(main_model)
+    aux = _norm_binding(aux_model)
+    if main is None and aux is None:
+        return None
+    profiles: list[dict[str, str]] = []
+    main_pool: list[int] = []
+    aux_pool: list[int] = []
+    if main is not None:
+        profiles.append(main)
+        main_pool.append(0)
+    if aux is not None:
+        aux_idx = len(profiles)
+        profiles.append(aux)
+        aux_pool.append(aux_idx)
+        # 旧语义：aux 可能跟随 main 派生（同 scope 借 key）；若不显式 aux，则空池由
+        # aux_effective() 运行时按 main 派生便宜档兜底（语义不变）。
+    else:
+        aux_pool = []
+    return {"model_profiles": profiles, "main_pool": main_pool, "aux_pool": aux_pool}
 
 
 def _binding_for_apply(raw: Any, previous: Any) -> dict[str, str] | None:
@@ -500,21 +586,48 @@ def apply(payload: dict[str, Any], *, canonical_pid: Any = None) -> dict[str, An
 
     norm = canonical_pid if callable(canonical_pid) else (lambda pid: pid)
 
-    # ── 1. 主模型 / 辅助模型 ──
+    # ── 1. 主模型 / 辅助模型（[v1.0.39.3] 多模型预存：收整组清单 + 主/辅池，派生 main/aux）──
+    # 收整组 profile（向前兼容：老包不带 model_profiles → 保持单组 main/aux 走原逻辑）。
+    profiles_raw = payload.get("model_profiles")
+    if isinstance(profiles_raw, list):
+        candidate["model_profiles"] = _norm_profiles(profiles_raw)
+        # 收主/辅池（下标列表，有序）；不提供池时用默认：主 = 清单第一条，辅 = 空。
+        candidate["main_pool"] = _norm_pool(payload.get("main_pool"), len(candidate["model_profiles"]))
+        candidate["aux_pool"] = _norm_pool(payload.get("aux_pool"), len(candidate["model_profiles"]))
+        # 派生 main/aux = 各自池首成员（从 candidate 读，因为 apply 末尾才 _state.update）。
+        main_member = _first_in_pool(candidate.get("model_profiles") or [], candidate.get("main_pool") or [])
+        aux_member = _first_in_pool(candidate.get("model_profiles") or [], candidate.get("aux_pool") or [])
+        candidate["main_model"] = dict(main_member) if main_member else None
+        candidate["aux_model"] = dict(aux_member) if aux_member else None
+    else:
+        # 老包：只有单组 main/aux（无 model_profiles）→ 保持原逻辑，同时迁移成池，
+        # 保证「存了多组模型之后切到旧包」也能正确落成清单一组。
+        migrated = _migrate_legacy_bindings(
+            _binding_for_apply(payload.get("main_model"), candidate.get("main_model")),
+            _binding_for_apply(payload.get("aux_model"), _matching_previous(
+                payload.get("aux_model"), candidate.get("aux_model"), candidate.get("main_model"))),
+        )
+        if migrated is not None:
+            candidate["model_profiles"] = migrated["model_profiles"]
+            candidate["main_pool"] = migrated["main_pool"]
+            candidate["aux_pool"] = migrated["aux_pool"]
+
     new_main = candidate_main
     old_main = candidate.get("main_model")
     main_changed = bool(new_main) and new_main != old_main
 
-    candidate["main_model"] = new_main if new_main else old_main
-    # A derived auxiliary binding and a newly introduced per-Agent override may intentionally
-    # omit the secret after GET /settings.  When there is no binding-specific predecessor, the
-    # newly resolved main binding is the only safe fallback, and _binding_for_apply still requires
-    # an exact provider/base_url/transport scope match before borrowing its key.
-    aux_raw = payload.get("aux_model")
-    aux_previous = _matching_previous(aux_raw, candidate.get("aux_model"), new_main)
-    aux = _binding_for_apply(aux_raw, aux_previous)
-    if aux is not None or "aux_model" in payload:
-        candidate["aux_model"] = aux
+    # [v1.0.39.3] 池模式已派生 main_model，无需再走原单组赋值；老包仍保留原覆盖逻辑。
+    if not isinstance(profiles_raw, list):
+        candidate["main_model"] = new_main if new_main else old_main
+        # A derived auxiliary binding and a newly introduced per-Agent override may intentionally
+        # omit the secret after GET /settings.  When there is no binding-specific predecessor, the
+        # newly resolved main binding is the only safe fallback, and _binding_for_apply still requires
+        # an exact provider/base_url/transport scope match before borrowing its key.
+        aux_raw = payload.get("aux_model")
+        aux_previous = _matching_previous(aux_raw, candidate.get("aux_model"), new_main)
+        aux = _binding_for_apply(aux_raw, aux_previous)
+        if aux is not None or "aux_model" in payload:
+            candidate["aux_model"] = aux
 
     # ── 2. per-Agent 绑定 ──
     incoming_agents = payload.get("agent_models")
@@ -767,17 +880,58 @@ def effective_approval_timeout(project_id: str | None = None) -> float | None:
     return None if v is None else float(v)
 
 
+def _first_in_pool(profiles: list[dict[str, str]], pool: list[int]) -> dict[str, str] | None:
+    """[v1.0.39.3] 纯函数：从候选 profiles + 有序下标池取第一个合法绑定。"""
+    for idx in pool:
+        try:
+            idx = int(idx)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx < len(profiles):
+            return dict(profiles[idx])
+    return None
+
+
+def _pool_candidates(pool_key: str) -> list[dict[str, str]]:
+    """[v1.0.39.3] 返回指定池（main_pool/aux_pool）的全部合法候选绑定列表（保序）。
+
+    供运行时「配额用尽切下一个候选」用——从池里按序拿到所有可切换的绑定。
+    """
+    profiles = _state.get("model_profiles") or []
+    pool = _state.get(pool_key) or []
+    out: list[dict[str, str]] = []
+    for idx in pool:
+        try:
+            idx = int(idx)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx < len(profiles):
+            out.append(dict(profiles[idx]))
+    return out
+
+
+def _first_profile_in_pool(pool_key: str) -> dict[str, str] | None:
+    """[v1.0.39.3] 从指定池（main_pool/aux_pool）取第一个合法候选绑定。
+
+    池可能为空、下标可能越界（前端删了行但池没重排）→ 逐个校验，返回第一个字典。
+    """
+    profiles = _state.get("model_profiles") or []
+    pool = _state.get(pool_key) or []
+    return _first_in_pool(profiles, pool)
+
+
 def model_binding_for(project_id: str, agent_id: str) -> dict[str, str] | None:
     """
-    某个 Agent 的生效模型绑定：个性化（"pid::aid"） > 全局主模型 > None。
+    某个 Agent 的生效模型绑定：个性化（"pid::aid"）> 全局主模型 > None。
     None = 用户没在设置面板配过 → 调用方（engine._new_agent）落回 CONFIG.deepseek_*。
+    [v1.0.39.3] 全局主模型 = main_pool 首成员（多模型路由池）。
     """
     _ensure_loaded()
     agents = _state.get("agent_models") or {}
     own = agents.get(f"{project_id}::{agent_id}")
     if own:
         return dict(own)
-    main = _state.get("main_model")
+    main = _first_profile_in_pool("main_pool")
     return dict(main) if main else None
 
 
@@ -811,13 +965,14 @@ _CHEAP_TIER: dict[str, str] = {
 def aux_effective() -> dict[str, str] | None:
     """
     辅助模型（摘要/翻译/知识蒸馏）的生效绑定：
-        显式 aux > 由主模型派生（同厂商同 Key，模型换便宜档） > None（落回 CONFIG）。
+        显式 aux > 由主模型派生（同厂商同 Key，模型换便宜档）> None（落回 CONFIG）。
+    [v1.0.39.3] 显式 aux = aux_pool 首成员；主模型 = main_pool 首成员。
     """
     _ensure_loaded()
-    aux = _state.get("aux_model")
+    aux = _first_profile_in_pool("aux_pool")
     if aux:
         return dict(aux)
-    main = _state.get("main_model")
+    main = _first_profile_in_pool("main_pool")
     if not main:
         return None
     derived = dict(main)
@@ -996,3 +1151,37 @@ def test_binding(binding: dict[str, Any]) -> dict[str, Any]:
     result["tested_fingerprint"] = binding_fingerprint(binding)
     result["zinnia_compatible"] = _zinnia_usable(binding)
     return result
+
+
+def test_all_bindings() -> dict[str, Any]:
+    """"[v1.0.39.3] 批量连接测试：对当前 model_profiles 全量真发最小请求。
+
+    后端持有全部真实 api_key（前端不回传真 key），故能测所有厂商/模型而不误报。
+    返回值按 model_profiles 下标对齐：{"ok": bool, "results": [{"idx", "ok", "message", "latency_ms"}, ...]}。
+    """
+
+    _ensure_loaded()
+    profiles = _state.get("model_profiles") or []
+    results: list[dict[str, Any]] = []
+    for idx, raw in enumerate(profiles):
+        norm = _norm_binding(raw)
+        if norm is None:
+            results.append({
+                "idx": idx,
+                "provider": "",
+                "model": "",
+                "ok": False,
+                "message": msg("event.test.binding.impl.01"),
+                "latency_ms": None,
+            })
+            continue
+        r = _test_binding_impl(norm)
+        results.append({
+            "idx": idx,
+            "provider": str(norm.get("provider", "")),
+            "model": str(norm.get("model", "")),
+            "ok": bool(r.get("ok")),
+            "message": str(r.get("message", "")),
+            "latency_ms": r.get("latency_ms"),
+        })
+    return {"ok": True, "results": results}

@@ -24,6 +24,8 @@ export interface ModelBinding {
   apiKey: string;
   /** Backend/public acknowledgement that a credential exists without exposing its value. */
   hasApiKey?: boolean;
+  /** [v1.0.39.3] 展示用掩码（仅前端，不持久化/不发后端）：sk-abc****xyz。不含真实 key。 */
+  apiKeyMask?: string;
   /** Explicit user intent; an empty apiKey alone always means "preserve the current key". */
   clearApiKey?: boolean;
   /** [v1.0.36] 自定义端点接入点（provider='custom' 时用户填；固定提供商为空、从目录取）。 */
@@ -64,6 +66,16 @@ export interface SettingsState {
   mainModel: ModelBinding | null;
   auxModel: ModelBinding | null;
   agentModels: Record<string, ModelBinding>;
+  // [v1.0.39.3] 多模型预存：清单 + 主/辅池
+  modelProfiles: ModelBinding[];
+  mainPoolIdxs: number[];
+  auxPoolIdxs: number[];
+  // [v1.0.39.3] 运行时连接状态（瞬态，不持久化）：key = `${provider}|${model}`。
+  //   'ok' = 连接正常；'fail' = 连接有问题；'testing' = 测试中；缺省 = 未测。
+  connState: Record<string, 'ok' | 'fail' | 'testing'>;
+  // [v1.0.39.3] 全量连接测试的防并发标记与请求序号（瞬态，不持久化）。
+  testingAll: boolean;
+  connTestRunId: number;
   notifyDesktop: boolean;
   closeToTray: boolean;
   approvalTimeoutS: number;
@@ -93,6 +105,15 @@ export interface SettingsState {
   saveAgentModel: (projectId: string, agentId: string, b: Omit<ModelBinding, 'sealed'>) => void;
   editAgentModel: (projectId: string, agentId: string) => void;
   clearAgentModel: (projectId: string, agentId: string) => void;
+  // [v1.0.39.3] 多模型预存：清单 + 主/辅池的操作
+  addModelProfile: (b: Omit<ModelBinding, 'sealed'>) => void;
+  updateModelProfile: (idx: number, b: Omit<ModelBinding, 'sealed'>) => void;
+  removeModelProfile: (idx: number) => void;
+  moveModelProfile: (idx: number, dir: -1 | 1) => void;
+  toggleProfilePool: (idx: number, which: 'main' | 'aux') => void;
+  setConnState: (key: string, state: 'ok' | 'fail' | 'testing') => void;
+  clearConnState: () => void;
+  testAllConnections: () => Promise<void>;
   setNotifyDesktop: (on: boolean) => void;
   setCloseToTray: (on: boolean) => void;
   setApprovalTimeout: (s: number) => void;
@@ -202,6 +223,16 @@ function bindingWire(b: ModelBinding | null | undefined): JsonObject | null {
   return wire;
 }
 
+/** [v1.0.39.3] 序列化整组清单（每个 profile 走 bindingWire；剔除无效项保序）。 */
+function bindingWires(profiles: ModelBinding[]): JsonObject[] {
+  const out: JsonObject[] = [];
+  for (const b of profiles) {
+    const wire = bindingWire(b);
+    if (wire) out.push(wire);
+  }
+  return out;
+}
+
 function bindingFromBackend(
   value: unknown,
   local?: ModelBinding | null,
@@ -278,6 +309,14 @@ function persistedBindings(bindings: Record<string, ModelBinding>): Record<strin
   );
 }
 
+/** [v1.0.39.3] API Key 展示掩码：sk-abc****xyz（前4 + **** + 后4），不含真实 key。 */
+function maskApiKey(key: string): string {
+  const k = (key ?? '').trim();
+  if (!k) return '';
+  if (k.length <= 8) return '••••••••';
+  return `${k.slice(0, 4)}****${k.slice(-4)}`;
+}
+
 function sealedBinding(
   binding: Omit<ModelBinding, 'sealed'>,
   previous?: ModelBinding | null,
@@ -287,9 +326,16 @@ function sealedBinding(
     previous
     && credentialScope(previous.provider) === credentialScope(binding.provider),
   );
+  // [v1.0.39.3] 保存瞬间捕获展示用掩码（前4+****+后4），不含真实 key；清 key 时置空。
+  const apiKeyMask = clearApiKey
+    ? undefined
+    : binding.apiKey
+      ? maskApiKey(binding.apiKey)
+      : previous?.apiKeyMask;
   return {
     ...binding,
     apiKey: binding.apiKey || '',
+    apiKeyMask,
     hasApiKey: clearApiKey
       ? false
       : (binding.hasApiKey === true || (sameScope && previous?.hasApiKey === true)),
@@ -332,6 +378,11 @@ function buildWirePayload(s: SettingsState): JsonObject {
     // 后端 aux_effective 在 aux_model 为空时按主模型运行时派生（_CHEAP_TIER / custom 完整跟随）。
     aux_model: bindingWire(s.auxModel),
     agent_models: agentModels,
+    // [v1.0.39.3] 多模型预存：整组清单 + 主/辅池下标（有序 = 自动路由顺序）。
+    // 后端收 group 后派生 main_model/aux_model；老字段保留用于向后兼容。
+    model_profiles: bindingWires(s.modelProfiles),
+    main_pool: s.mainPoolIdxs,
+    aux_pool: s.auxPoolIdxs,
     approval_timeout_s: s.approvalTimeoutS,
     group_approval_timeouts: { ...s.groupApprovalTimeouts },
     language: normalizeLanguage(s.language), // [v1.0.21.3]
@@ -588,6 +639,13 @@ export const useSettingsStore = create<SettingsState>()(
       mainModel: null,
       auxModel: null,
       agentModels: {},
+      // [v1.0.39.3] 多模型预存：初始清单 + 主/辅池
+      modelProfiles: [],
+      mainPoolIdxs: [],
+      auxPoolIdxs: [],
+      connState: {},
+      testingAll: false,
+      connTestRunId: 0,
       notifyDesktop: true,
       closeToTray: true,
       approvalTimeoutS: 300,
@@ -692,6 +750,149 @@ export const useSettingsStore = create<SettingsState>()(
         });
         schedulePush();
       },
+      // ── [v1.0.39.3] 多模型预存：清单 + 主/辅池 ──
+      addModelProfile(binding): void {
+        const migrated = { ...binding, model: migrateModelName(binding.provider, binding.model) };
+        set((current) => {
+          const profiles = [...current.modelProfiles, sealedBinding(migrated)];
+          const newIdx = profiles.length - 1;
+          // [v1.0.39.3] 新加行默认加入主池；若辅池为空（或这是唯一模型），也加入辅池，
+          //   保证主/辅池各自至少 1 个，绝无 0 个。
+          const mainPool = [...current.mainPoolIdxs, newIdx];
+          const auxPool = current.auxPoolIdxs.length === 0 || profiles.length === 1
+            ? [...current.auxPoolIdxs, newIdx]
+            : current.auxPoolIdxs;
+          return {
+            modelProfiles: profiles,
+            mainPoolIdxs: mainPool,
+            auxPoolIdxs: auxPool,
+            modelApplyState: 'stale',
+            modelApplyError: null,
+            appliedFingerprint: null,
+          };
+        });
+        schedulePush();
+      },
+      updateModelProfile(idx, binding): void {
+        const migrated = { ...binding, model: migrateModelName(binding.provider, binding.model) };
+        set((current) => {
+          if (idx < 0 || idx >= current.modelProfiles.length) return current;
+          const profiles = [...current.modelProfiles];
+          profiles[idx] = sealedBinding(migrated, current.modelProfiles[idx]);
+          return { modelProfiles: profiles, modelApplyState: 'stale', modelApplyError: null, appliedFingerprint: null };
+        });
+        schedulePush();
+      },
+      removeModelProfile(idx): void {
+        set((current) => {
+          if (idx < 0 || idx >= current.modelProfiles.length) return current;
+          const profiles = current.modelProfiles.filter((_, i) => i !== idx);
+          // 删除后重排池下标 > idx 的项（它们整体左移一位）；直接删掉等于 idx 的引用。
+          const remap = (pool: number[]): number[] =>
+            pool.filter((i) => i !== idx).map((i) => (i > idx ? i - 1 : i));
+          // [v1.0.39.3] 主/辅池各自至少 1 个：删除后若某池变空，用剩余的最小下标补入。
+          //   若清单已删空（profiles.length === 0），则池保持空（没有可补的模型）。
+          let mainPool = remap(current.mainPoolIdxs);
+          let auxPool = remap(current.auxPoolIdxs);
+          if (profiles.length > 0) {
+            if (mainPool.length === 0) mainPool = [0];
+            if (auxPool.length === 0) auxPool = [0];
+          }
+          // mainModel/auxModel 保留为派生（= 池首成员），删除后由下次 apply 重算。
+          return {
+            modelProfiles: profiles,
+            mainPoolIdxs: mainPool,
+            auxPoolIdxs: auxPool,
+            modelApplyState: 'stale',
+            modelApplyError: null,
+            appliedFingerprint: null,
+          };
+        });
+        schedulePush();
+      },
+      moveModelProfile(idx, dir): void {
+        set((current) => {
+          const j = idx + dir;
+          if (idx < 0 || idx >= current.modelProfiles.length || j < 0 || j >= current.modelProfiles.length) return current;
+          const profiles = [...current.modelProfiles];
+          // [v1.0.39.3] 非空断言：idx/j 已在 if 里校验通过（0 <= idx,j < length）
+          const a = profiles[idx]!;
+          const b = profiles[j]!;
+          profiles[idx] = b;
+          profiles[j] = a;
+          const remap = (pool: number[]): number[] =>
+            pool.map((i) => (i === idx ? j : i === j ? idx : i));
+          return {
+            modelProfiles: profiles,
+            mainPoolIdxs: remap(current.mainPoolIdxs),
+            auxPoolIdxs: remap(current.auxPoolIdxs),
+            modelApplyState: 'stale',
+            modelApplyError: null,
+            appliedFingerprint: null,
+          };
+        });
+        schedulePush();
+      },
+      toggleProfilePool(idx, which): void {
+        set((current) => {
+          const poolKey = which === 'main' ? 'mainPoolIdxs' : 'auxPoolIdxs';
+          const pool = current[poolKey];
+          const isRemoving = pool.includes(idx);
+          // [v1.0.39.3] 不允许把某池关成 0 个：若本次是移除(关掉)且该池只剩这 1 个，则保持不变。
+          if (isRemoving && pool.length === 1) return current;
+          const next = isRemoving ? pool.filter((i) => i !== idx) : [...pool, idx];
+          return {
+            [poolKey]: next,
+            modelApplyState: 'stale',
+            modelApplyError: null,
+            appliedFingerprint: null,
+          } as Partial<SettingsState>;
+        });
+        schedulePush();
+      },
+      setConnState(key, state): void {
+        set((current) => ({ connState: { ...current.connState, [key]: state } }));
+      },
+      clearConnState(): void {
+        set({ connState: {} });
+      },
+      async testAllConnections(): Promise<void> {
+        const state = get();
+        const profiles = state.modelProfiles;
+        if (profiles.length === 0) return;
+        // [v1.0.39.3] 防并发抖动：测试中直接忽略新触发；请求序号丢弃过期响应。
+        //   快速连点会并发多个请求，后发先回/先发后回互相覆盖 → 同一模型勾/叉乱跳。
+        if (get().testingAll) return;
+        const runId = (get().connTestRunId || 0) + 1;
+        set({ testingAll: true, connTestRunId: runId });
+        // 全部置为「测试中」。后端持有全部真实 api_key——前端不回传真 key，故必须由后端代测。
+        const testing: Record<string, 'testing'> = {};
+        for (const p of profiles) testing[`${p.provider}|${p.model}`] = 'testing';
+        set({ connState: testing });
+        try {
+          const response = await runtimeFetch(`${runtimeHttpBase()}/settings/test-all`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          const body = asObject(await response.json().catch(() => null));
+          // 只接受最新一次请求的结果（序号对不上 = 已有更新一轮在跑，丢弃本轮）。
+          if (get().connTestRunId !== runId) return;
+          if (!body || !Array.isArray(body.results)) return;
+          const next: Record<string, 'ok' | 'fail'> = {};
+          for (const r of body.results) {
+            const k = `${stringValue(r.provider)}|${stringValue(r.model)}`;
+            if (!k || k === '|') continue;
+            next[k] = r.ok === true ? 'ok' : 'fail';
+          }
+          set({ connState: next });
+        } catch {
+          // 网络/接口失败：不清空 testing 之外的旧值，仅保留当前 testing 态，
+          // 避免把「正测着」误标成 ok。前端下次执行会重新拉全量。
+        } finally {
+          if (get().connTestRunId === runId) set({ testingAll: false });
+        }
+      },
       setNotifyDesktop(on): void {
         set({ notifyDesktop: on });
         syncDesktopPrefs(get());
@@ -783,6 +984,10 @@ export const useSettingsStore = create<SettingsState>()(
         mainModel: persistedBinding(state.mainModel),
         auxModel: persistedBinding(state.auxModel),
         agentModels: persistedBindings(state.agentModels),
+        // [v1.0.39.3] 多模型预存清单 + 主/辅池（localStorage 持久化，key 脱敏）
+        modelProfiles: state.modelProfiles.map((p) => persistedBinding(p)),
+        mainPoolIdxs: state.mainPoolIdxs,
+        auxPoolIdxs: state.auxPoolIdxs,
         notifyDesktop: state.notifyDesktop,
         closeToTray: state.closeToTray,
         approvalTimeoutS: state.approvalTimeoutS,

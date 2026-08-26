@@ -4042,6 +4042,7 @@ class KnoweServer:
                 "/shutdown": {"POST"},
                 "/settings": {"GET", "POST"},
                 "/settings/test": {"POST"},
+                "/settings/test-all": {"POST"},
                 "/projects/menu-state": {"GET"},
                 "/projects/pin": {"POST"},
                 "/projects/mute": {"POST"},
@@ -4177,6 +4178,11 @@ class KnoweServer:
 
                 if path == "/settings/test" and method == "POST":
                     await self._serve_settings_test(writer, body_bytes)
+                    await writer.drain()
+                    return
+
+                if path == "/settings/test-all" and method == "POST":
+                    await self._serve_settings_test_all(writer, body_bytes)
                     await writer.drain()
                     return
 
@@ -5738,6 +5744,14 @@ class KnoweServer:
 
         # urllib 是同步阻塞——丢线程池，别把事件循环钉在网络等待上（最多 15s）。
         result = await asyncio.to_thread(runtime_settings.test_binding, binding)
+        body = json.dumps(result, ensure_ascii=False).encode()
+        self._write_http(writer, b"200 OK", body, b"application/json; charset=utf-8")
+
+    async def _serve_settings_test_all(self, writer: asyncio.StreamWriter,
+                                       body_bytes: bytes) -> None:
+        # [v1.0.39.3] 批量连接测试：对当前 model_profiles 全量真发最小请求。
+        # 后端持有全部真实 api_key（前端不回传真 key），故能测所有厂商/模型。
+        result = await asyncio.to_thread(runtime_settings.test_all_bindings)
         body = json.dumps(result, ensure_ascii=False).encode()
         self._write_http(writer, b"200 OK", body, b"application/json; charset=utf-8")
 
