@@ -7,6 +7,7 @@
  * explicit Promise, validates HTTP/JSON boundaries and reconciles after backend reconnect.
  */
 
+import { isWebRuntime } from '../shared/deployment';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { featureEnabled } from '../shared/featureFlags';
@@ -344,21 +345,25 @@ function sealedBinding(
   };
 }
 
-function acknowledgePersistedSecrets(body: JsonObject): void {
+function acknowledgePersistedSecrets(body: JsonObject, submitted: SettingsState): void {
   const current = useSettingsStore.getState();
   const effective = asObject(body.effective);
   const publicMain = bindingFromBackend(effective?.main_model);
   const acknowledgedMain = publicMain ?? acknowledgedBinding(current.mainModel);
   useSettingsStore.setState({
-    mainModel: acknowledgedMain,
+    mainModel: current.mainModel === submitted.mainModel ? acknowledgedMain : current.mainModel,
+    modelProfiles: current.modelProfiles.map((binding, idx) => binding === submitted.modelProfiles[idx]
+      ? acknowledgedBinding(binding) as ModelBinding : binding),
     // Backend apply permits an explicit auxiliary/Agent binding to reuse the newly persisted main
     // credential only inside the same provider/base/transport scope. Mirror that acknowledgement
     // without ever copying the credential value into renderer state or localStorage.
-    auxModel: acknowledgedBinding(current.auxModel, acknowledgedMain),
+    auxModel: current.auxModel === submitted.auxModel
+      ? acknowledgedBinding(current.auxModel, acknowledgedMain) : current.auxModel,
     agentModels: Object.fromEntries(
       Object.entries(current.agentModels).map(([key, binding]) => [
         key,
-        acknowledgedBinding(binding, acknowledgedMain) as ModelBinding,
+        binding === submitted.agentModels[key]
+          ? acknowledgedBinding(binding, acknowledgedMain) as ModelBinding : binding,
       ]),
     ),
   });
@@ -478,7 +483,7 @@ async function postCurrentSettingsNow(
   const state = useSettingsStore.getState();
   const payload = buildWirePayload(state);
   if (expectedFingerprint) payload.expected_fingerprint = expectedFingerprint;
-  if (state.settingsRevision > 0) payload.expected_revision = state.settingsRevision;
+  if (isWebRuntime() || state.settingsRevision > 0) payload.expected_revision = state.settingsRevision;
 
   try {
     const response = await runtimeFetch(`${runtimeHttpBase()}/settings`, {
@@ -507,7 +512,7 @@ async function postCurrentSettingsNow(
     }
     const result = parseApplyResult(body, response.status);
     const persisted = result.ok;
-    if (persisted) acknowledgePersistedSecrets(body);
+    if (persisted) acknowledgePersistedSecrets(body, state);
     if (expectedFingerprint && result.appliedFingerprint !== expectedFingerprint) {
       result.ok = false;
       result.message = i18n.t('settings.13');
@@ -583,19 +588,26 @@ async function reconcileSettings(): Promise<ModelApplyResult> {
       && bindingSignature(state.mainModel) !== bindingSignature(backendMain),
     );
 
-    if (backendMain) {
+    if (backendMain || isWebRuntime()) {
       useSettingsStore.setState({
         mainModel: backendMain,
         // [v1.0.36] auxModel 为 null = 用户从未显式设置辅助模型（跟随主模型）。
         // 后端 aux_model 存的是 buildWirePayload 发过去的「派生便宜档」，reconcile 回传会把它
         // 当成「显式设置」污染掉跟随态——null 时保持 null，不覆盖用户意图。
-        auxModel: state.auxModel ? backendAux : null,
+        auxModel: isWebRuntime() ? backendAux : (state.auxModel ? backendAux : null),
         agentModels: backendAgents,
+        modelProfiles: Array.isArray(body.model_profiles)
+          ? body.model_profiles.map((value) => bindingFromBackend(value)).filter((binding): binding is ModelBinding => binding !== null)
+          : state.modelProfiles,
+        mainPoolIdxs: Array.isArray(body.main_pool) ? body.main_pool.filter((idx): idx is number => Number.isInteger(idx)) : state.mainPoolIdxs,
+        auxPoolIdxs: Array.isArray(body.aux_pool) ? body.aux_pool.filter((idx): idx is number => Number.isInteger(idx)) : state.auxPoolIdxs,
         userName: stringValue(body.user_name).trim() || state.userName,
-        approvalTimeoutS: numberValue(body.approval_timeout_s, state.approvalTimeoutS),
+        approvalTimeoutS: body.approval_timeout_s === null
+          ? 0 : numberValue(body.approval_timeout_s, state.approvalTimeoutS),
         groupApprovalTimeouts: Object.fromEntries(
           Object.entries(asObject(body.group_approval_timeouts) ?? {})
-            .filter((entry): entry is [string, number] => typeof entry[1] === 'number'),
+            .filter((entry): entry is [string, number | null] => entry[1] === null || typeof entry[1] === 'number')
+            .map(([key, value]) => [key, value === null ? 0 : value]),
         ),
         settingsConflict: conflict
           ? i18n.t('settings.08')
@@ -613,7 +625,7 @@ async function reconcileSettings(): Promise<ModelApplyResult> {
 
     // First install: local sealed settings exist while the backend has no binding.  Push
     // the snapshot for persistence, but activation remains stale until test→explicit apply.
-    if (!backendMain && state.mainModel?.sealed && Boolean(state.mainModel.apiKey)) {
+    if (!isWebRuntime() && !backendMain && state.mainModel?.sealed && Boolean(state.mainModel.apiKey)) {
       return postCurrentSettings(undefined, true);
     }
     return result;
@@ -673,8 +685,15 @@ export const useSettingsStore = create<SettingsState>()(
         const previous = get().mainModel;
         // [v1.0.19.5] 保存前迁移旧模型名（目录同步后旧名在目录里查不到）。
         const migrated = { ...binding, model: migrateModelName(binding.provider, binding.model) };
+        const saved = sealedBinding(migrated, previous);
+        const profiles = [...get().modelProfiles];
+        const previousIdx = get().mainPoolIdxs[0];
+        const idx = previousIdx !== undefined && profiles[previousIdx] ? previousIdx : profiles.length;
+        profiles[idx] = saved;
         set({
-          mainModel: sealedBinding(migrated, previous),
+          mainModel: saved,
+          modelProfiles: profiles,
+          mainPoolIdxs: [idx],
           agentModels: {},
           modelApplyState: 'stale',
           modelApplyError: null,

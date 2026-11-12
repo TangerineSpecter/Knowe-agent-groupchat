@@ -16,6 +16,8 @@
  *   user / agent               → MessageBubble
  */
 
+import { isWebRuntime } from '../shared/deployment';
+import { uploadFiles } from '../web/api';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useDeferredValue } from 'react';
 import { useCachedT } from '../i18n';
 import { useKnoweStore } from '../store/store';
@@ -764,7 +766,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
         knowe?: { signDroppedFiles?: (paths: string[]) => Promise<Array<Record<string, unknown>>> };
       }).knowe
     : undefined;
-  const canDropFiles = Boolean(dragBridge?.signDroppedFiles);
+  const canDropFiles = isWebRuntime() || Boolean(dragBridge?.signDroppedFiles);
   // 只认**文件**拖拽：拖文字/链接（types 里没有 'Files'）一律不接管，浏览器默认行为不受影响。
   const dragHasFiles = (e: React.DragEvent): boolean =>
     Array.from(e.dataTransfer?.types ?? []).includes('Files');
@@ -790,6 +792,14 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
     dragDepthRef.current = 0;
     setDragging(false);
     if (!canDropFiles || !projectId) return;
+    if (isWebRuntime()) {
+      const files = Array.from(e.dataTransfer.files ?? []);
+      const targetProject = projectId;
+      toast(t('web.upload.loading'));
+      void uploadFiles(files).then((picks) => { addAttachments(targetProject, picks); toast(t('composer.multimodalWarn')); })
+        .catch((reason: unknown) => toast(reason instanceof Error ? reason.message : t('web.upload.failed')));
+      return;
+    }
     const paths = Array.from(e.dataTransfer.files ?? [])
       .map((f) => (f as unknown as { path?: string }).path)
       .filter((p): p is string => Boolean(p));

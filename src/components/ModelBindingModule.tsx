@@ -22,6 +22,7 @@
 import React, { useEffect, useState } from 'react';
 import { PROVIDERS, modelsOf, providerOf, CUSTOM_PROVIDER_SLUG, CUSTOM_PROVIDER_LABEL_KEY, isCustomProvider } from '../store/modelCatalog';
 import type { ModelBinding, TestResult } from '../store/settings';
+import { isWebRuntime } from '../shared/deployment';
 import { testBinding } from '../store/settings'; // [v1.0.24.1] 确认后自动测连接
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
@@ -138,6 +139,8 @@ interface Props {
   onEdit: () => void;
   /** 「确定」按钮旁的额外元素（比如「清除个性化」）。 */
   extraAction?: React.ReactNode;
+  /** Parent owns the test→apply transaction in the first-run gate. */
+  autoTest?: boolean;
 }
 
 /** Key 的星号占位展示（封存态不回显真 Key 长度也无妨——统一 12 个点）。 */
@@ -145,7 +148,7 @@ interface Props {
 const KEY_MASK = '••••••••••••';
 
 export const ModelBindingModule: React.FC<Props> = ({
-  binding, followNote, followBinding, onSave, onEdit, extraAction,
+  binding, followNote, followBinding, onSave, onEdit, extraAction, autoTest = true,
 }) => {
   const { t } = useTranslation();
   const sealed = !!binding?.sealed;
@@ -181,6 +184,7 @@ export const ModelBindingModule: React.FC<Props> = ({
 
   const handleConfirm = (): void => {
     onSave({ provider, model, apiKey: apiKey.trim(), baseUrl: baseUrl.trim() });
+    if (!autoTest) return;
     const payload = { provider, model, apiKey: apiKey.trim(), baseUrl: baseUrl.trim() };
     setTesting(true);
     setTestResult(null);
@@ -394,7 +398,7 @@ export const ModelBindingModule: React.FC<Props> = ({
       <div className="set-item">
         <div className="si-body">
           <div className="si-t">API Key</div>
-          <div className="si-d">{t('model.binding.module.07')}</div>
+          <div className="si-d">{t(isWebRuntime() ? 'web.model.keyHint' : 'model.binding.module.07')}</div>
         </div>
         <div className="set-ctrl">
           <div className="field pw mset-field">

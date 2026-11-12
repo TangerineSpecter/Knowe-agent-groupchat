@@ -32,6 +32,9 @@ class _HubStub:
     def has(self, project_id: str) -> bool:
         return project_id in self.projects
 
+    def unread_count(self, project_id: str) -> int:
+        return int(getattr(self.projects.get(project_id), "unread_count", 0))
+
     async def emit_no_seq(self, event: dict[str, object]) -> None:
         self.no_seq_events.append(event)
 
@@ -130,6 +133,7 @@ def test_create_project_retry_reconciles_to_existing_approval_binding(server) ->
         project_dir: str | None = None,
         *,
         request_project_id: str | None = None,
+        roles: list[str] | None = None,
     ) -> str:
         created.append((project_id, project_name, project_dir, request_project_id))
         server.hub.projects[project_id] = SimpleNamespace(name=project_name, unread_count=0)

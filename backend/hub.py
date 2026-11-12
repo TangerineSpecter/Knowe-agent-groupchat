@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Callable, Iterable
+from typing import Any, Awaitable, Callable, Iterable
 
 from websockets.protocol import State
 
@@ -101,10 +101,15 @@ class Hub:
         self.projects: dict[str, Project] = {}
         self.clients: set[Client] = set()
         self._seq_lock = asyncio.Lock()    # ★ 单点盖号锁
+        # Projection and delivery share the project's FIFO ordering. Keep I/O outside
+        # the seq lock so a slow projection cannot stall unrelated projects.
+        self._broadcast_locks: dict[str, asyncio.Lock] = {}
         # [v0.4] 落盘钩子（backend.persist.Store）。None = 纯内存，行为和 v0.3 一模一样。
         #   放在这里而不是放进 emit 的调用方，是因为 emit 是**唯一**的出站口——
         #   挂在这里，就不存在「某条事件忘了存」这回事。
         self.store = store
+        # Optional projections observe events even while every browser is disconnected.
+        self.event_listeners: list[Callable[[dict[str, Any]], Awaitable[None]]] = []
         # project_id → 用户可见文本过滤器。由 ProjectEngine 注册，Hub 是最终强制出口。
         self._public_text_filters: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
         # project_id -> deterministic projection event_id -> committed envelope.
@@ -448,6 +453,21 @@ class Hub:
 
     # ── 广播 ──
     async def broadcast(self, event: dict[str, Any], targets: Iterable[Client] | None = None) -> None:
+        # emit/snapshot enter here immediately after assigning seq, without an
+        # intervening await. Acquire the FIFO lock before a listener can yield,
+        # otherwise a later event can overtake the one awaiting projection.
+        project_id = str(event.get("project_id") or "")
+        lock = self._broadcast_locks.setdefault(project_id, asyncio.Lock())
+        async with lock:
+            await self._broadcast_ordered(event, targets)
+
+    async def _broadcast_ordered(self, event: dict[str, Any], targets: Iterable[Client] | None) -> None:
+        if targets is None:
+            for listener in self.event_listeners:
+                try:
+                    await listener(dict(event))
+                except Exception:
+                    log.exception("Event projection failed for %s", event.get("type"))
         clients = list(targets if targets is not None else self.clients)
         if not clients:
             return

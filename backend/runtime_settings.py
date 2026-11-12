@@ -590,7 +590,16 @@ def apply(payload: dict[str, Any], *, canonical_pid: Any = None) -> dict[str, An
     # 收整组 profile（向前兼容：老包不带 model_profiles → 保持单组 main/aux 走原逻辑）。
     profiles_raw = payload.get("model_profiles")
     if isinstance(profiles_raw, list):
-        candidate["model_profiles"] = _norm_profiles(profiles_raw)
+        previous_profiles = candidate.get("model_profiles") or []
+        hydrated = []
+        for raw in profiles_raw:
+            # Each saved profile may carry a distinct credential, even at the same provider.
+            # Match its model identity before applying scope-safe credential preservation.
+            previous = next((item for item in previous_profiles
+                             if isinstance(raw, dict) and item.get("model") == raw.get("model")
+                             and _matching_previous(raw, item) is not None), None)
+            hydrated.append(_binding_for_apply(raw, previous))
+        candidate["model_profiles"] = _norm_profiles(hydrated)
         # 收主/辅池（下标列表，有序）；不提供池时用默认：主 = 清单第一条，辅 = 空。
         candidate["main_pool"] = _norm_pool(payload.get("main_pool"), len(candidate["model_profiles"]))
         candidate["aux_pool"] = _norm_pool(payload.get("aux_pool"), len(candidate["model_profiles"]))
@@ -612,8 +621,8 @@ def apply(payload: dict[str, Any], *, canonical_pid: Any = None) -> dict[str, An
             candidate["main_pool"] = migrated["main_pool"]
             candidate["aux_pool"] = migrated["aux_pool"]
 
-    new_main = candidate_main
-    old_main = candidate.get("main_model")
+    new_main = candidate.get("main_model") if isinstance(profiles_raw, list) else candidate_main
+    old_main = _state.get("main_model")
     main_changed = bool(new_main) and new_main != old_main
 
     # [v1.0.39.3] 池模式已派生 main_model，无需再走原单组赋值；老包仍保留原覆盖逻辑。
@@ -816,6 +825,8 @@ def api_snapshot(*, welcome_state: str = "unknown") -> dict[str, Any]:
     # needs only the opaque applied fingerprint returned by model_apply_ack().
     value.pop("fingerprint_salt", None)
     value.pop("active_model_fingerprint", None)
+    value["model_profiles"] = [public for raw in value.get("model_profiles", [])
+                               if (public := public_binding(raw)) is not None]
     value["main_model"] = public_binding(value.get("main_model"))
     value["aux_model"] = public_binding(value.get("aux_model"))
     raw_agents = value.get("agent_models")

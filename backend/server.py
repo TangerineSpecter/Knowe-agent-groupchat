@@ -3421,7 +3421,8 @@ class KnoweServer:
         self._assert_project_activatable(project_id)
         existed = self.hub.has(project_id)
 
-        resolved = _clean_project_dir(project_dir)
+        from .web_workspaces import project_directory
+        resolved = _clean_project_dir(project_directory(project_id, project_dir))
         if resolved is not None:
             self.project_dirs[project_id] = resolved
             self._save_project_dirs()
@@ -6538,7 +6539,7 @@ class KnoweServer:
     # ═══════════════════════════════════════════════════════════
     # 启动
     # ═══════════════════════════════════════════════════════════
-    async def run(self) -> None:
+    async def run(self, *, install_signals: bool = True) -> None:
         if not re.fullmatch(r"[0-9a-fA-F]{64}", CONFIG.runtime_token):
             raise RuntimeError("KNOWE_RUNTIME_TOKEN must be exactly 64 hexadecimal characters")
 
@@ -6589,7 +6590,7 @@ class KnoweServer:
             )
 
         loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in ((signal.SIGINT, signal.SIGTERM) if install_signals else ()):
             try:
                 loop.add_signal_handler(sig, self._shutdown_event.set)
             except NotImplementedError:
@@ -7154,6 +7155,11 @@ def _clean_project_dir(raw: str | None) -> str | None:
             "建群目录不是绝对路径（%s），已拒绝：本版本要求选择真实存在的文件夹（绝对路径）",
             text,
         )
+        return None
+
+    from .web_workspaces import web_workspace_root
+    web_root = web_workspace_root()
+    if web_root is not None and not path.resolve().is_relative_to(web_root):
         return None
 
     # ── 出路 1：绝对路径 ──

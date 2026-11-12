@@ -1,10 +1,11 @@
-/** 消息气泡下方的文件卡片；点击后只请求独立原生预览窗口。 */
+/** 消息气泡下方的文件卡片；桌面独立窗口预览，Web 新标签页预览与下载。 */
 
+import { isWebRuntime } from '../shared/deployment';
 import React, { useEffect, useRef, useState } from 'react';
 import type { ProducedFile, AttachmentInput } from '../store/state';
 import { openPreviewWindow, revealFileInFolder } from '../store/filePreview';
 import { humanBytes, kindOf, typeLabel } from '../preview/fileKinds';
-import { FolderRevealIcon, IconForKind } from '../preview/icons';
+import { DownloadIcon, FolderRevealIcon, IconForKind } from '../preview/icons';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import '../styles/knowe-preview.css';
@@ -104,11 +105,11 @@ const FileCard: React.FC<{ file: ProducedFile; projectId: string }> = ({ file, p
         className={'fc-reveal' + (revealState === 'opening' ? ' busy' : '')}
         onClick={onReveal}
         onKeyDown={(event: React.KeyboardEvent<HTMLButtonElement>) => event.stopPropagation()}
-        title={revealState === 'error' ? revealError : t('file.card.05')}
-        aria-label={t('file.card.openDirAria', { name: file.name })}
+        title={revealState === 'error' ? revealError : t(isWebRuntime() ? 'web.download' : 'file.card.05')}
+        aria-label={t(isWebRuntime() ? 'web.downloadAria' : 'file.card.openDirAria', { name: file.name })}
         aria-busy={revealState === 'opening'}
       >
-        <FolderRevealIcon size={16} />
+        {isWebRuntime() ? <DownloadIcon size={16} /> : <FolderRevealIcon size={16} />}
       </button>
       {revealState === 'error' && (
         <span className="fc-reveal-error" role="alert">{revealError}</span>
@@ -198,6 +199,14 @@ const AttachmentCard: React.FC<{ file: AttachmentInput }> = ({ file }) => {
   const size = humanBytes(typeof file.size === 'number' ? file.size : undefined);
 
   const open = (): void => {
+    if (isWebRuntime() && file.sig) {
+      const params = new URLSearchParams({ path: file.path, sig: file.sig });
+      const anchor = document.createElement('a');
+      anchor.href = `/api/web/attachments?${params}`;
+      anchor.download = file.name;
+      anchor.click();
+      return;
+    }
     const bridge = localAttachmentBridge();
     if (!bridge?.openLocalFile || !file.sig) {
       setError(t('file.card.04'));
@@ -246,7 +255,7 @@ const AttachmentCard: React.FC<{ file: AttachmentInput }> = ({ file }) => {
         </span>
         {error && <span className="fc-preview-error" role="alert">{error}</span>}
       </span>
-      <button
+      {!isWebRuntime() && <button
         type="button"
         className="fc-reveal"
         onClick={reveal}
@@ -255,7 +264,7 @@ const AttachmentCard: React.FC<{ file: AttachmentInput }> = ({ file }) => {
         aria-label={t('file.card.openDirAria', { name: file.name })}
       >
         <FolderRevealIcon size={16} />
-      </button>
+      </button>}
     </div>
   );
 };

@@ -274,7 +274,7 @@ function insertProjectOrder(draft: ConversationOrderDraft, pid: string): void {
   } else {
     let afterPins = 0;
     while (afterPins < draft.projectOrder.length
-           && !!draft.pinnedProjects[draft.projectOrder[afterPins]]) afterPins += 1;
+           && !!draft.pinnedProjects[draft.projectOrder[afterPins] ?? '']) afterPins += 1;
     draft.projectOrder.splice(afterPins, 0, pid);
   }
   normalizeProjectOrder(draft);
@@ -294,7 +294,7 @@ function bumpProjectOrder(draft: ConversationOrderDraft, pid: string): void {
   draft.projectOrder.splice(idx, 1);
   let afterPins = 0;
   while (afterPins < draft.projectOrder.length
-         && !!draft.pinnedProjects[draft.projectOrder[afterPins]]) afterPins += 1;
+         && !!draft.pinnedProjects[draft.projectOrder[afterPins] ?? '']) afterPins += 1;
   draft.projectOrder.splice(afterPins, 0, pid);
 }
 
@@ -359,7 +359,7 @@ function reconcileConversationStateAlias(
       pinned: !!oldPinned && !oldFolded,
       muted: oldMuted,
       folded: oldFolded,
-      pinned_at: oldPinned,
+      pinned_at: oldPinned ?? 0,
     });
   } else {
     normalizeProjectOrder(draft);
@@ -476,7 +476,7 @@ function reconcileSnapshotAlias(requestProjectId: string, canonicalProjectId: st
     if (_snapQueue[i] === requestProjectId) _snapQueue[i] = canonicalProjectId;
   }
   for (let i = _snapQueue.length - 1; i >= 0; i -= 1) {
-    if (_snapQueue.indexOf(_snapQueue[i]) !== i) _snapQueue.splice(i, 1);
+    if (_snapQueue[i] !== undefined && _snapQueue.indexOf(_snapQueue[i]!) !== i) _snapQueue.splice(i, 1);
   }
 }
 
@@ -722,6 +722,7 @@ export interface KnoweStore {
 
   // ── Actions: Lifecycle ──
   setSocket: (s: SocketAPI) => void;
+  calibrateActivity: (projectId: string, activity: ActivityLedgerEntry[]) => void;
   setView: (name: string) => void;
 
   /** [v1.0.38.2] 请求联系人资料页自动打开编辑面板（由右键菜单写入、ContactsView 消费）。 */
@@ -1325,7 +1326,7 @@ export const useKnoweStore = create<KnoweStore>()(
           if (belongsToDeletedProject(convId)) _synced.delete(convId);
         }
         for (let i = _snapQueue.length - 1; i >= 0; i -= 1) {
-          if (belongsToDeletedProject(_snapQueue[i])) _snapQueue.splice(i, 1);
+          if (_snapQueue[i] !== undefined && belongsToDeletedProject(_snapQueue[i]!)) _snapQueue.splice(i, 1);
         }
 
         set((draft) => {
@@ -1711,7 +1712,8 @@ export const useKnoweStore = create<KnoweStore>()(
           applyEvent(conv, ev, agents, roleTypes);
         }
       });
-      scheduleTransientFrameFallback(projectId, pendingTransientFrameIds(get().convs[projectId]));
+      const updatedConv = get().convs[projectId];
+      if (updatedConv) scheduleTransientFrameFallback(projectId, pendingTransientFrameIds(updatedConv));
       // [v1.0.39-B3] 增量注入也算消息层变化 → 同步防抖写回本地缓存
       scheduleMessageSave(() => buildMessageCacheFromConvs(get().convs));
     },

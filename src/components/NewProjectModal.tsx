@@ -17,6 +17,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useKnoweStore } from '../store/store';
 import { newProjectRequestId } from '../store/platform';
+import { isWebRuntime, WEB_DIRECTORY_PENDING } from '../shared/deployment';
 import DirectoryPicker from './DirectoryPicker';
 import RolePicker from './RolePicker';
 import { useTranslation } from 'react-i18next';
@@ -62,12 +63,12 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({ open, onClose 
   }, [open]);
 
   const nameBad = attempted && !name.trim();
-  const dirBad = attempted && !dir.trim();
+  const dirBad = attempted && ((!dir.trim() && !isWebRuntime()) || dir === WEB_DIRECTORY_PENDING);
 
   const submit = useCallback(() => {
     const n = name.trim();
     const d = dir.trim();
-    if (!n || !d) {
+    if (!n || (!d && !isWebRuntime()) || d === WEB_DIRECTORY_PENDING) {
       setAttempted(true);          // ← 现在才有资格标红
       if (!n) inputRef.current?.focus();
       return;
@@ -89,9 +90,7 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({ open, onClose 
       <div className="modal modal-np">
         <div className="modal-title">{t('new.project.modal.03')}</div>
         <div className="modal-body">
-          {t('new.project.modal.hint1')}
-          <strong>{t('new.project.modal.06')}</strong>
-          {t('new.project.modal.hint2')}
+          {isWebRuntime() ? t('web.project.hint') : <>{t('new.project.modal.hint1')}<strong>{t('new.project.modal.06')}</strong>{t('new.project.modal.hint2')}</>}
         </div>
 
         <div className="modal-field">
@@ -115,6 +114,7 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({ open, onClose 
         <div className="modal-field">
           <label className="modal-label" htmlFor="np-dir">{t('common.24')}</label>
           <DirectoryPicker
+            allowAuto
             value={dir}
             onChange={setDir}
             label={t('common.04')}

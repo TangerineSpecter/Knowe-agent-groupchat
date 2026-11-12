@@ -48,6 +48,7 @@ import type {
 import { validateInbound, NO_SEQ_EVENT_TYPES } from '../contract/envelope';
 import { runtimeWsUrl } from '../shared/runtimeEndpoints';
 import i18n from '../i18n';
+import { isWebRuntime } from '../shared/deployment';
 
 // ═══════════════════════════════════════════════════════════════
 // [v1.0.18.4] WebSocket 认证：通过 URL query 参数传递 token
@@ -71,8 +72,7 @@ async function ensureAuthToken(): Promise<void> {
   authTokenReady = true;
 }
 
-function getAuthWsUrl(): string {
-  const base = runtimeWsUrl();
+function getAuthWsUrl(base: string): string {
   if (!authTokenCache) return base;
   const sep = base.includes('?') ? '&' : '?';
   return `${base}${sep}token=${encodeURIComponent(authTokenCache)}`;
@@ -271,6 +271,8 @@ export function createSocket({ url = runtimeWsUrl(), callbacks }: SocketConfig):
 
   // ── WebSocket state ──
   let ws: WebSocket | null = null;
+  let intentionalClose = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ── ② 水位按项目（§2.3-a）— 单点持有，不进 store ──
   const _watermarks: Record<string, number> = {};
@@ -455,6 +457,7 @@ export function createSocket({ url = runtimeWsUrl(), callbacks }: SocketConfig):
   function stopHeartbeat(): void {
     if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
     hbSocket = null;
+    pongDeadline = null;
   }
 
   // ── Internal: send raw command ──
@@ -714,6 +717,9 @@ export function createSocket({ url = runtimeWsUrl(), callbacks }: SocketConfig):
   // ── Connection lifecycle ──
 
   function connect(): void {
+    intentionalClose = false;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
     setStatus('connecting');
 
     // Close stale connection
@@ -723,7 +729,7 @@ export function createSocket({ url = runtimeWsUrl(), callbacks }: SocketConfig):
     }
 
     // [v1.0.18.4] URL 带 token query 参数，绕过 onBeforeSendHeaders 的 ws:// 不匹配问题
-    const tokenUrl = getAuthWsUrl();
+    const tokenUrl = getAuthWsUrl(url);
     ws = new WebSocket(tokenUrl);
     const thisSocket = ws;
 
@@ -788,9 +794,23 @@ export function createSocket({ url = runtimeWsUrl(), callbacks }: SocketConfig):
     };
 
     ws.onclose = (event: CloseEvent) => {
+      if (ws !== thisSocket || intentionalClose) return;
+      if (ws === thisSocket && event.code === 4003 && isWebRuntime()) {
+        intentionalClose = true;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+        stopHeartbeat();
+        stopEchoCheck();
+        setStatus('closed');
+        window.dispatchEvent(new Event('knowe:web-auth-required'));
+        return;
+      }
       // 4001: superseded by newer connection — yield, don't reconnect
       if (event?.code === 4001) {
         console.warn('[socket] superseded by a newer connection (code 4001) — yielding, will NOT reconnect');
+        intentionalClose = true;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = null;
         stopHeartbeat();
         stopEchoCheck();
         setStatus('closed');
@@ -806,7 +826,7 @@ export function createSocket({ url = runtimeWsUrl(), callbacks }: SocketConfig):
     };
 
     ws.onerror = () => {
-      try { ws?.close(); } catch { /* best effort */ }
+      try { if (ws === thisSocket) thisSocket.close(); } catch { /* best effort */ }
     };
   }
 
@@ -821,8 +841,9 @@ export function createSocket({ url = runtimeWsUrl(), callbacks }: SocketConfig):
   }
 
   function scheduleReconnect(): void {
+    if (intentionalClose || reconnectTimer) return;
     setStatus('reconnecting');
-    setTimeout(connect, backoff);
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; if (!intentionalClose) connect(); }, backoff);
     backoff = Math.min(backoff * 2, RECONNECT_BACKOFF_MAX_MS);
   }
 
@@ -834,12 +855,17 @@ export function createSocket({ url = runtimeWsUrl(), callbacks }: SocketConfig):
     connect,
 
     disconnect(): void {
+      intentionalClose = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = null;
       stopHeartbeat();
       stopEchoCheck();
       handshakeActive = false;
       handshakeBuffer = [];
       handshakeProjectId = null;
-      if (ws) { ws.close(); }
+      const closing = ws;
+      ws = null;
+      closing?.close();
       setStatus('closed');
     },
 

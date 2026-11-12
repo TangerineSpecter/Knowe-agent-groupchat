@@ -102,3 +102,9 @@ export const FolderRevealIcon: React.FC<IconProps> = ({ size }) => (
     <path d="m13.5 13.5 2 2 3.5-3.5" {...stroke} />
   </svg>
 );
+
+export const DownloadIcon: React.FC<IconProps> = ({ size }) => (
+  <svg {...svgProps(size)}>
+    <path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4" {...stroke} />
+  </svg>
+);

@@ -99,6 +99,7 @@ import {
   syncFromProjectCreated as syncDirectoryFromProjectCreated,
 } from '../store/directoryRecovery';
 
+import { isWebRuntime } from '../shared/deployment';
 import Rail from '../components/Rail';
 import ConvList from '../components/ConvList';
 import ConnBadge from '../components/ConnBadge';
@@ -467,6 +468,9 @@ export const App: React.FC = () => {
           // [v1.0.24.6-P2] 事件批量消费：入 16ms rAF 窗口队列，每帧最多渲染一次
           //（详见模块级 enqueueEvent/flushEvents 注释）。
           enqueueEvent(ev);
+          if (ev.type === 'approval_card' || ev.type === 'approval_resolved' || ev.type === 'error' || ev.type === 'completion_status') {
+            window.dispatchEvent(new Event('knowe:notifications-changed'));
+          }
         },
         onStatus: (st) => useKnoweStore.getState().setConnStatus(st),
         onEchoOk: (cmid) => useKnoweStore.getState().confirmEcho(cmid),
@@ -524,6 +528,22 @@ export const App: React.FC = () => {
       // [v1.0.23.2] 不再 disconnect / 不再重置标记：socket 是全应用单实例，
       //   App remount 时连接保持（否则 HMR 每次更新都重建连接 + 全量重放）。
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isWebRuntime()) return;
+    let hiddenAt = 0;
+    const reconnect = (): void => { useKnoweStore.getState()._socket?.connect(); };
+    const visible = (): void => {
+      if (document.hidden) hiddenAt = Date.now();
+      else if (hiddenAt && Date.now() - hiddenAt > 5000) reconnect();
+    };
+    window.addEventListener('online', reconnect);
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      window.removeEventListener('online', reconnect);
+      document.removeEventListener('visibilitychange', visible);
     };
   }, []);
 
@@ -684,7 +704,7 @@ export const App: React.FC = () => {
           与 ToastHost 分工：ToastHost 播全局 notices；这里播菜单操作的轻反馈（已复制/已收藏…）。 */}
       <FloatingLayers />
       {/* [阶段一 1.5] DevDrawer 是开发走廊抽屉（Ctrl+Shift+D），正式版不挂载（组件内部亦有同款判定）。 */}
-      {!isPackaged && <DevDrawer />}
+      {!isPackaged && !isWebRuntime() && <DevDrawer />}
       {/*
         [v0.44.1 Bug3] 首次启动·强制模型引导。挂在最后 = z 序最高：还没配置全局主模型时
         铺一层雾化遮罩把整屏（含浮层/DevDrawer）罩住，走完「选模型→连接测试→进入」才放行。

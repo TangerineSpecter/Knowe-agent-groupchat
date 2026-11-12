@@ -55,3 +55,9 @@ assets/videos/compressed/
 # [v1.0.39.2] 数据迁移残留备份（改名保留，不进仓库）
 backend/data.stale-*/
 
+
+# Single-user web deployment (data and access secrets never enter source control)
+/deploy/data/
+/deploy/workspaces/
+/deploy/web-password
+/workspaces/

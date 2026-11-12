@@ -9,6 +9,8 @@
  */
 
 import React from 'react';
+import { isWebRuntime } from '../shared/deployment';
+import NotificationCenter from '../web/NotificationCenter';
 import { useKnoweStore } from '../store/store';
 import { selectActiveView, selectCmdKOpen } from '../store/selectors';
 import { useSettingsStore } from '../store/settings';
@@ -127,6 +129,7 @@ export const Rail: React.FC = () => {
         {appearance === 'dark' ? <IconSun /> : <IconMoon />}
       </button>
 
+      {isWebRuntime() && <NotificationCenter />}
       <div className="rail-spacer" />
     </nav>
   );

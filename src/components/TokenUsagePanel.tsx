@@ -676,7 +676,6 @@ export const TokenUsagePanel: React.FC = () => {
   const savedChars = totals?.saved_chars ?? 0;
   // [v1.0.34-M4-v2] 瞬时组（本回合=最新一条含数据的记录）+ 投影保留条数
   const latestCompressionCount = totals?.latest_compression_count ?? null;
-  const latestSavedChars = totals?.latest_saved_chars ?? null;
   const latestProjectedCount = totals?.latest_projected_count ?? null;
   const projectedCount = totals?.projected_count ?? 0;
   const hasContextData = hasUsage || compressionCount > 0 || savedChars > 0

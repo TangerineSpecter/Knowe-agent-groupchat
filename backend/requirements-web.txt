@@ -1,0 +1,8 @@
+-r requirements.txt
+aiohttp>=3.11,<4
+# Agent browser and web-search tools are optional in desktop, bundled in the web image.
+playwright>=1.50,<2
+ddgs>=9,<10
+
+# Text extraction uses the 1.x API; avoid 2.x bundled layout/ONNX models in the web image.
+PyMuPDF>=1.24,<1.27

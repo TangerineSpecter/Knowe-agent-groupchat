@@ -17,6 +17,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
+import { isWebRuntime } from '../shared/deployment';
 import type { BackendStatus, UpdateStatus } from '../shared/bridge';
 import { useKnoweStore } from '../store/store';
 import {
@@ -540,7 +541,7 @@ const NotifyPane: React.FC = () => {
 
   return (
     <>
-      <div className="set-block">
+      {!isWebRuntime() && <div className="set-block">
         <h4>{t('settings.view.21')}</h4>
         <SetItem t={t('global.search.06')} d={t('settings.view.05')}>
           <Switch on={notifyDesktop} onToggle={setNotifyDesktop} label={t('global.search.06')} />
@@ -548,7 +549,7 @@ const NotifyPane: React.FC = () => {
         <SetItem t={t('settings.view.10')} d={t('settings.view.25')}>
           <Switch on={closeToTray} onToggle={setCloseToTray} label={t('settings.view.10')} />
         </SetItem>
-      </div>
+      </div>}
 
       <div className="set-block">
         <h4>{t('knowledge.view.02')}</h4>
@@ -654,7 +655,7 @@ const AboutPane: React.FC = () => {
     <div className="set-block about-pane">
       <h4>{t('settings.view.09')}</h4>
       {/* [v1.0.28 R5] 标题下方显示大版本号（桌面版v1.0），右侧 tag 显示详细小版本号 v1.0.28 */}
-      <SetItem t={t('global.search.11')} d={majorVersion ? t('settings.view.desktopVersion', { version: majorVersion }) : undefined}>
+      <SetItem t={t('global.search.11')} d={isWebRuntime() ? t('web.edition') : (majorVersion ? t('settings.view.desktopVersion', { version: majorVersion }) : undefined)}>
         <span className="navrow-tag">{shellVersion ? `v${shellVersion}` : ''}</span>
       </SetItem>
       <SetItem t={t('settings.view.12')} d={t('settings.view.19')}>
@@ -678,7 +679,7 @@ const AboutPane: React.FC = () => {
         </a>
       </SetItem>
       {/* [v1.0.25.4] 自动更新（PRD）：手动检查 + 有新版下载完成时出现「重启安装更新」 */}
-      <SetItem t={t('settings.view.15')} d={t('settings.view.30')}>
+      {isWebRuntime() ? <SetItem t={t('web.update.title')} d={t('web.update.hint')} /> : <SetItem t={t('settings.view.15')} d={t('settings.view.30')}>
         <div className="set-update-row">
           <button
             type="button"
@@ -706,7 +707,7 @@ const AboutPane: React.FC = () => {
         {updateStatus.state === 'error' && (
           <div className="set-update-hint set-update-error">{t('settings.view.autoUpdateError')}</div>
         )}
-      </SetItem>
+      </SetItem>}
       <div className="set-item">
         <div className="si-body">
           <div className="si-t">{t('settings.view.06')}</div>
@@ -819,16 +820,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="set-restart-banner" role="status" aria-live="polite">
                 <div className="set-restart-copy">
                   <strong>{t('settings.view.31')}</strong>
-                  <span>{t('settings.view.32')}</span>
+                  <span>{t(isWebRuntime() ? 'web.restart.hint' : 'settings.view.32')}</span>
                 </div>
-                <button
+                {!isWebRuntime() && <button
                   type="button"
                   className="test-btn set-restart-btn"
                   onClick={() => { void restartBackend(); }}
                   disabled={restartBusy}
                 >
                   {restartBusy ? t('settings.view.17') : t('settings.view.29')}
-                </button>
+                </button>}
               </div>
             )}
             {section === '账户与身份' && <AccountPane />}

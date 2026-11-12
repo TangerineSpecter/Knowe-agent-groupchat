@@ -34,6 +34,7 @@ import { pickAvatar } from '../store/avatar';
 import { projectIdForCard } from '../store/platform';
 import { IconUsers, IconTask, IconCheck, IconX, IconPlus } from './icons';
 import Markdown from './markdown';
+import { isWebRuntime, WEB_DIRECTORY_PENDING } from '../shared/deployment';
 import DirectoryPicker from './DirectoryPicker';
 import RolePicker from './RolePicker';
 
@@ -376,12 +377,12 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = React.memo(({
    * 后端项目从第一帧起就是同一个身份，不再依赖异步 alias 重键来消灭临时群。
    */
   const nameBad = isProject && attempted && !name.trim();
-  const dirBad = isProject && attempted && !dir.trim();
+  const dirBad = isProject && attempted && ((!dir.trim() && !isWebRuntime()) || dir === WEB_DIRECTORY_PENDING);
 
   const confirmProject = (): void => {
     const finalName = name.trim();
     const finalDir = dir.trim();
-    if (!finalName || !finalDir) {
+    if (!finalName || (!finalDir && !isWebRuntime()) || finalDir === WEB_DIRECTORY_PENDING) {
       setAttempted(true);              // ← 现在才有资格标红
       return;                          // ★ 不 approve、不 setSubmitted：卡还开着，他还能改
     }
@@ -456,6 +457,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = React.memo(({
           <label className="ap-project-label">{t('common.24')}</label>
           {/* [v0.8c #4b] 路径框在左、「选择目录」在右（CSS 的 .approval .dir-row 改成横排了） */}
           <DirectoryPicker
+            allowAuto
             value={dir}
             onChange={setDir}
             label={t('common.04')}

@@ -22,10 +22,12 @@ import {
   type TrackableProducedFile,
 } from '../store/filePreview';
 import i18n from '../i18n';
+import { isWebRuntime } from '../shared/deployment';
+import { previewUrl } from '../store/filePreview';
 import { invokeWindowControl } from '../shared/windowControl';
 import PreviewTabs from './PreviewTabs';
 import PreviewRenderer from './PreviewRenderer';
-import { FolderRevealIcon, IconForKind, IconRetry } from './icons';
+import { DownloadIcon, FolderRevealIcon, IconForKind, IconRetry } from './icons';
 import { humanBytes, kindOf, typeLabel } from './fileKinds';
 
 export interface PreviewTab {
@@ -169,7 +171,7 @@ function errorMessage(reason: unknown): string {
 
 export { resolveProjectRelativeTarget } from '../store/filePreview';
 
-const PreviewApp: React.FC = () => {
+const PreviewApp: React.FC<{ initialPayload?: PreviewOpenPayload }> = ({ initialPayload }) => {
   const { t } = useTranslation();
   const [state, dispatch] = useReducer(previewTabsReducer, INITIAL_STATE);
   const stateRef = useRef(state);
@@ -245,6 +247,10 @@ const PreviewApp: React.FC = () => {
     bridge.previewReady();
     return unsubscribe;
   }, [openTab]);
+
+  useEffect(() => {
+    if (initialPayload) openTab(initialPayload);
+  }, [initialPayload, openTab]);
 
   const activateTab = useCallback((key: string): void => {
     dispatch({ type: 'activate', key });
@@ -333,6 +339,13 @@ const PreviewApp: React.FC = () => {
   const revealActive = useCallback((): void => {
     const tab = stateRef.current.tabs.find((candidate) => candidate.key === stateRef.current.activeKey);
     if (!tab || revealBusyKey) return;
+    if (isWebRuntime()) {
+      const anchor = document.createElement('a');
+      anchor.href = previewUrl(tab.projectId, tab.file) + '&download=1';
+      anchor.download = tab.file.name;
+      anchor.click();
+      return;
+    }
     const run = ++revealRunRef.current;
     setRevealBusyKey(tab.key);
     setRevealError('');
@@ -379,10 +392,10 @@ const PreviewApp: React.FC = () => {
               onClick={revealActive}
               disabled={revealBusyKey === activeTab.key}
               aria-busy={revealBusyKey === activeTab.key}
-              title={t('preview.app.01')}
+              title={isWebRuntime() ? t('web.download') : t('preview.app.01')}
             >
-              <FolderRevealIcon size={15} />
-              <span>{revealBusyKey === activeTab.key ? t('preview.app.02') + '…' : t('preview.app.07')}</span>
+              {isWebRuntime() ? <DownloadIcon size={15} /> : <FolderRevealIcon size={15} />}
+              <span>{isWebRuntime() ? t('web.download') : (revealBusyKey === activeTab.key ? t('preview.app.02') + '…' : t('preview.app.07'))}</span>
             </button>
           </div>
         )}
@@ -426,8 +439,8 @@ const PreviewApp: React.FC = () => {
                       onClick={revealActive}
                       disabled={revealBusyKey === tab.key}
                     >
-                      <FolderRevealIcon size={15} />
-                      <span>{revealBusyKey === tab.key ? t('preview.app.02') + '…' : t('preview.app.07')}</span>
+                      {isWebRuntime() ? <DownloadIcon size={15} /> : <FolderRevealIcon size={15} />}
+                      <span>{isWebRuntime() ? t('web.download') : (revealBusyKey === tab.key ? t('preview.app.02') + '…' : t('preview.app.07'))}</span>
                     </button>
                   </div>
                 </div>

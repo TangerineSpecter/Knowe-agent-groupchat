@@ -10,6 +10,8 @@ import './styles/knowe-tokens.css';
 import './styles/knowe-components.css';
 import './styles/bubble-reasoning.css';
 import App from './app/App';
+import { isWebRuntime } from './shared/deployment';
+import WebEntry from './web/WebEntry';
 import i18n from './i18n';
 
 // [v1.0.19.4] 全局兜底：窗口任意处的拖拽默认行为（浏览器直接打开/导航到被拖入的文件）
@@ -23,4 +25,4 @@ if (!root) {
   throw new Error(i18n.t('main.01'));
 }
 
-ReactDOM.createRoot(root).render(<App />);
+ReactDOM.createRoot(root).render(isWebRuntime() ? <WebEntry><App /></WebEntry> : <App />);

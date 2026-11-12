@@ -1,0 +1,42 @@
+ARG NODE_IMAGE=node:22-bookworm-slim
+ARG PYTHON_IMAGE=python:3.11-slim-bookworm
+FROM ${NODE_IMAGE} AS frontend
+WORKDIR /build
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
+ARG NPM_REGISTRY=https://registry.npmjs.org
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund --registry=$NPM_REGISTRY --fetch-retries=3
+COPY index.html tsconfig.json vite.web.config.ts ./
+COPY src ./src
+COPY public ./public
+RUN npm run web:build
+
+FROM ${PYTHON_IMAGE} AS runtime
+ENV PYTHONUNBUFFERED=1 PYTHONUTF8=1 PYTHONPATH=/app/backend \
+    KNOWE_DATA_DIR=/data KNOWE_WEB_WORKSPACE_ROOT=/workspace \
+    KNOWE_WEB_HOST=0.0.0.0 KNOWE_WEB_PORT=8090 KNOWE_WEB_DIST=/app/dist \
+    KNOWE_AGENT=deepseek KNOWE_BROWSER_HEADLESS=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright HOME=/workspace/.home
+WORKDIR /app
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=3 update && apt-get -o Acquire::Retries=3 install -y --no-install-recommends git ca-certificates fonts-noto-cjk libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+# Debian bookworm in both stages: the Node binary and npm work without a second toolchain.
+COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
+COPY --from=frontend /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+COPY backend/requirements-web.lock ./backend/requirements-web.lock
+RUN pip install --no-cache-dir --no-compile --require-hashes -r backend/requirements-web.lock
+RUN playwright install --with-deps --only-shell chromium \
+    && rm -rf /var/lib/apt/lists/*
+COPY backend ./backend
+COPY --from=frontend /build/dist ./dist
+RUN groupadd --gid 1000 knowe && useradd --uid 1000 --gid 1000 --create-home knowe \
+    && mkdir -p /data /workspace && chown knowe:knowe /data /workspace
+USER knowe
+EXPOSE 8090
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=4)"
+CMD ["python", "-m", "backend.web"]

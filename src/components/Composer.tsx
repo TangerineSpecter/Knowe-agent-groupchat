@@ -28,6 +28,8 @@ import React, {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
+import { isWebRuntime } from '../shared/deployment';
+import { uploadFiles } from '../web/api';
 import { roleLabel } from '../shared/roleLabel';
 import { SEND_KEY } from '../shared/platform';
 import { useKnoweStore } from '../store/store';
@@ -162,7 +164,9 @@ export const Composer: React.FC = () => {
   const clearAttachments = useKnoweStore((s) => s.clearAttachments);
 
   // Electron 里才有 selectFiles；浏览器兜底时附件按钮保持禁用（不假装能用）。
-  const canAttach = typeof window !== 'undefined'
+  const webFiles = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const canAttach = isWebRuntime() || typeof window !== 'undefined'
     && Boolean((window as unknown as { knowe?: { selectFiles?: unknown } }).knowe?.selectFiles);
 
   const remindMultimodal = useCallback(() => {
@@ -172,6 +176,7 @@ export const Composer: React.FC = () => {
 
   const pickFiles = useCallback(async () => {
     if (!projectId) return;
+    if (isWebRuntime()) { webFiles.current?.click(); return; }
     const bridge = (window as unknown as {
       knowe?: { selectFiles?: () => Promise<Array<Record<string, unknown>>> };
     }).knowe;
@@ -402,6 +407,8 @@ export const Composer: React.FC = () => {
   };
 
   const editorRef = useRef<Editor | null>(null);
+  const placeholderRef = useRef('');
+  placeholderRef.current = conn === 'live' ? t('composer.02', { sendKey: SEND_KEY }) : t('composer.03');
 
   const editor = useEditor({
     extensions: [
@@ -409,9 +416,7 @@ export const Composer: React.FC = () => {
         heading: { levels: [1, 2, 3] },
       }),
       Placeholder.configure({
-        placeholder: conn === 'live'
-          ? t('composer.02', { sendKey: SEND_KEY })
-          : t('composer.03'),
+        placeholder: () => placeholderRef.current,
       }),
       Mention.configure({
         HTMLAttributes: { class: 'mention-tag' },
@@ -438,6 +443,10 @@ export const Composer: React.FC = () => {
     onBlur: () => setFocus(false),
     onCreate: () => { grow(); },
   }, []);
+
+  useEffect(() => {
+    if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr);
+  }, [editor, conn, t]);
 
   editorRef.current = editor;
 
@@ -771,6 +780,17 @@ export const Composer: React.FC = () => {
       </div>
 
       {/* [v1.0.19.4] 文件放置区域：输入框上方新展开的空间。 */}
+      {isWebRuntime() && <input ref={webFiles} type="file" multiple hidden aria-label={t('web.upload.label')} onChange={(event) => {
+        const files = Array.from(event.target.files ?? []);
+        event.target.value = '';
+        if (!files.length || uploading) return;
+        const targetProject = projectId;
+        setUploading(true);
+        void uploadFiles(files).then((picks) => { if (targetProject) addAttachments(targetProject, picks); remindMultimodal(); })
+          .catch((reason: unknown) => toast(reason instanceof Error ? reason.message : t('web.upload.failed')))
+          .finally(() => setUploading(false));
+      }} />}
+      {uploading && <div role="status" className="attach-strip">{t('web.upload.loading')}</div>}
       {attachments.length > 0 && (
         <div className="attach-strip" aria-label={t('composer.10')}>
           {attachments.map((file) => (
@@ -805,7 +825,7 @@ export const Composer: React.FC = () => {
             className="icon-btn"
             aria-label={t('composer.16')}
             title={canAttach ? t('composer.16') : t('composer.09')}
-            disabled={!canAttach || !projectId}
+            disabled={!canAttach || !projectId || uploading}
             onClick={() => { void pickFiles(); }}
           >
             <IconClip />

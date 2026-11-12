@@ -26,7 +26,11 @@
     "icon:icns": "node scripts/make-icon-icns.mjs",
     "copy:chromium": "node scripts/copy-chromium.mjs",
     "dist:win": "node scripts/clean-electron-build.mjs && npm run icon:ico && npm run electron:build && npm run copy:chromium && electron-builder --win nsis",
-    "dist:mac": "node scripts/clean-electron-build.mjs && npm run icon:icns && npm run electron:build && npm run copy:chromium && electron-builder --mac"
+    "dist:mac": "node scripts/clean-electron-build.mjs && npm run icon:icns && npm run electron:build && npm run copy:chromium && electron-builder --mac",
+    "web:dev": "vite --config vite.web.config.ts --mode web",
+    "web:build": "vite build --config vite.web.config.ts --mode web",
+    "web:typecheck": "tsc -p tsconfig.web.json",
+    "web:test": "vitest run --config vitest.web.config.ts"
   },
   "dependencies": {
     "@tiptap/extension-mention": "^3.30.1",

@@ -1,3 +1,4 @@
+import { isWebRuntime } from './deployment';
 import type { RuntimeEndpoints } from './bridge';
 
 /** Browser-only fallback lives in one place; Electron supplies the authoritative values. */
@@ -7,6 +8,10 @@ export const DEFAULT_RUNTIME_ENDPOINTS: RuntimeEndpoints = Object.freeze({
 });
 
 export function runtimeEndpoints(): RuntimeEndpoints {
+  if (isWebRuntime()) return {
+    httpBase: `${window.location.origin}/api/runtime`,
+    wsUrl: `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/runtime/ws`,
+  };
   return window.knowe?.runtimeEndpoints ?? DEFAULT_RUNTIME_ENDPOINTS;
 }
 

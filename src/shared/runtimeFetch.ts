@@ -15,6 +15,8 @@
  *   4. 不吞错：fetch 失败原样抛出。
  */
 
+import { isWebRuntime } from './deployment';
+
 let authTokenCache = '';
 let authTokenReady = false;
 
@@ -57,5 +59,9 @@ export async function runtimeFetch(
   const token = await ensureAuthToken();
   const headers = new Headers(init?.headers);
   if (token) headers.set('X-Knowe-Runtime-Token', token);
-  return fetch(input, { ...init, headers });
+  const response = await fetch(input, { ...init, headers });
+  if (isWebRuntime() && response.status === 401) {
+    window.dispatchEvent(new Event('knowe:web-auth-required'));
+  }
+  return response;
 }

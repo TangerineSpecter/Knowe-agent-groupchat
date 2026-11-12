@@ -54,8 +54,8 @@ export const FirstRunModelGate: React.FC = () => {
   const [result, setResult] = useState<TestResult | null>(null);
 
   const sealed = !!mainModel?.sealed;
-  // 已封存绑定的「身份」——一旦厂商/模型/Key 变了（用户点了修改再改），测试结果作废。
-  const sig = sealed ? `${mainModel?.provider}|${mainModel?.model}|${mainModel?.apiKey}` : '';
+  // 编辑时 sealed 变为 false，使测试作废；保存回执清除临时 Key 不应清除成功结果。
+  const sig = sealed ? `${mainModel?.provider}|${mainModel?.model}` : '';
   useEffect(() => {
     setResult(null);
   }, [sig]);
@@ -63,6 +63,7 @@ export const FirstRunModelGate: React.FC = () => {
   // [v1.0.19.5] 保存即自动测试：onSave 封存后打标记，等 React 完成重渲染（sealed
   //   已更新）再触发 runTest——不能用 setTimeout 赌时序，渲染可能晚于宏任务。
   const pendingAutoTest = React.useRef(false);
+  const testGeneration = React.useRef(0);
   useEffect(() => {
     if (pendingAutoTest.current && sealed && !testing) {
       pendingAutoTest.current = false;
@@ -88,10 +89,12 @@ export const FirstRunModelGate: React.FC = () => {
 
   const runTest = async (): Promise<void> => {
     if (testing || !sealed) return;
+    const generation = testGeneration.current;
     setTesting(true);
     setResult(null);
     try {
       const testedResult = await testModelConnection('main');
+      if (generation !== testGeneration.current) return;
       if (!testedResult.ok) {
         setResult(testedResult);
         return;
@@ -108,6 +111,7 @@ export const FirstRunModelGate: React.FC = () => {
       // configured compatible auxiliary binding.  The POST /settings acknowledgement is
       // the authority for effective Zinnia compatibility; do not reject on probe metadata.
       const applied = await applyModelBinding(testedResult.testedFingerprint);
+      if (generation !== testGeneration.current) return;
       setResult(applied.ok && applied.appliedFingerprint === testedResult.testedFingerprint
         ? { ...testedResult, message: t('first.run.model.gate.applied', { message: testedResult.message || t('first.run.model.gate.09') }) }
         : {
@@ -150,13 +154,19 @@ export const FirstRunModelGate: React.FC = () => {
         <div className="frg-body">
           <ModelBindingModule
             binding={mainModel}
+            autoTest={false}
             onSave={(b) => {
+              testGeneration.current += 1;
               saveMainModel(b);
               // [v1.0.19.5] 保存即自动测试（与设置页同款）：封存配置后自动验证连接，
               //   用户无需手动点「测试并应用」。实际触发在 useEffect 里（等渲染完成）。
               pendingAutoTest.current = true;
             }}
-            onEdit={editMainModel}
+            onEdit={() => {
+              testGeneration.current += 1;
+              setResult(null);
+              editMainModel();
+            }}
           />
 
           <div className="frg-test">
@@ -173,7 +183,7 @@ export const FirstRunModelGate: React.FC = () => {
                 ? (modelApplyState === 'pending' ? t('first.run.model.gate.09') : t('first.run.model.gate.01'))
                 : result
                   ? `${result.message}${result.ok && result.latencyMs != null ? ` · ${result.latencyMs}ms` : ''}`
-                  : modelApplyError
+                  : sealed && modelApplyError
                     ? modelApplyError
                     : (sealed ? t('first.run.model.gate.08') : t('first.run.model.gate.05'))}
             </span>

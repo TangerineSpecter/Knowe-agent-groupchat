@@ -6,6 +6,7 @@
  */
 
 import type { PreviewFilePayload } from '../shared/bridge';
+import { isWebRuntime } from '../shared/deployment';
 import { runtimeHttpBase } from '../shared/runtimeEndpoints';
 import { runtimeFetch } from '../shared/runtimeFetch';
 import type { ProducedFile } from './state';
@@ -233,17 +234,6 @@ export function previewUrl(
   return `${previewOrigin()}/preview?${params.toString()}`;
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  if (!globalThis.crypto?.subtle) {
-    throw new Error(i18n.t('file.preview.10'));
-  }
-  const digest = await globalThis.crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(value),
-  );
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
 /**
  * HTML 预览：直接获取内容，用 srcdoc 渲染。
  * 不用 URL、不触发导航事件、不走 DNS/iframe 策略——最简路径。
@@ -336,6 +326,14 @@ export async function revealFileInFolder(
   projectId: string,
   file: PreviewFilePayload,
 ): Promise<TrackableProducedFile> {
+  if (isWebRuntime()) {
+    const resolved = await resolvePreviewFile(projectId, file);
+    const anchor = document.createElement('a');
+    anchor.href = previewUrl(projectId, resolved) + '&download=1';
+    anchor.download = resolved.name;
+    anchor.click();
+    return resolved;
+  }
   const response = await requestPreview(`${previewOrigin()}/files/reveal`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -380,6 +378,14 @@ export async function openPreviewWindow(file: ProducedFile, projectId: string): 
     source_path: sourcePathOf(file),
   };
   const bridge = window.knowe;
+  if (isWebRuntime()) {
+    const payload = { projectId: realProjectId, sourceKey: previewSourceKey(realProjectId, sourceFile), file: sourceFile };
+    const hash = new URLSearchParams({ preview: JSON.stringify(payload) });
+    const opened = window.open(`/#${hash}`, '_blank');
+    if (!opened) throw new Error(i18n.t('web.preview.blocked'));
+    opened.opener = null;
+    return;
+  }
   if (!bridge?.openPreview) throw new Error(i18n.t('file.preview.14'));
   await bridge.openPreview({
     projectId: realProjectId,

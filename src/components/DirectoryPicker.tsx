@@ -16,11 +16,14 @@
  *      「拿不到完整路径」，而不是假装选好了——后端收到一个相对名字会当成默认目录处理。
  */
 
+import { isWebRuntime } from '../shared/deployment';
+import ServerDirectoryPicker from '../web/ServerDirectoryPicker';
 import React, { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 export interface DirectoryPickerProps {
   /** 当前选中的目录（受控） */
+  allowAuto?: boolean;
   value: string;
   /** 选好了 → 把绝对路径交出去 */
   onChange: (dir: string) => void;
@@ -55,6 +58,7 @@ type MaybeElectronFile = File & { path?: string };
 export const DirectoryPicker: React.FC<DirectoryPickerProps> = ({
   value,
   onChange,
+  allowAuto,
   label,
   // [v0.8b #6] 中性的一句话：说清这儿要干什么，不带任何「你错了」的味道。
   placeholder,
@@ -107,6 +111,8 @@ export const DirectoryPicker: React.FC<DirectoryPickerProps> = ({
     onChange(folder);
     setNote(t('directory.picker.04'));
   }, [onChange, t]);
+
+  if (isWebRuntime()) return <ServerDirectoryPicker value={value} onChange={onChange} allowAuto={allowAuto} />;
 
   const empty = !value.trim();
   // [v0.8b #6] 只有「必填 + 空着 + 用户已经按过创建」三者同时成立，才亮红

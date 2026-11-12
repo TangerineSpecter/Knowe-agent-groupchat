@@ -1,3 +1,6 @@
 -r requirements.txt
 pytest>=8
 pytest-asyncio>=0.23
+
+# Single-user browser gateway integration tests.
+aiohttp>=3.11,<4

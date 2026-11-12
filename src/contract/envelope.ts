@@ -1282,12 +1282,19 @@ export const ShutdownCmdSchema = z.object({
 /** @deprecated 前端永不发送——误发=自杀 */
 export type ShutdownCmd = z.infer<typeof ShutdownCmdSchema>;
 
+export const StopWorkerCmdSchema = z.object({
+  type: z.literal('stop_worker'),
+  project_id: z.string(),
+  agent_id: z.string(),
+});
+
 /** 所有出站指令联合类型 */
 export const OutboundCommandSchema = z.discriminatedUnion('type', [
   UserMessageCmdSchema,
   ApproveCmdSchema,
   RejectCmdSchema,
   FeedbackInstructionCmdSchema,
+  StopWorkerCmdSchema,
   CreateProjectCmdSchema,
   AddAgentsCmdSchema,
   UpdateAgentProfileCmdSchema,   // [v1.0.38.2] 改名/换头像

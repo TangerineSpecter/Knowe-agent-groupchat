@@ -139,6 +139,7 @@ export function appendToolActivity(
 
     if (pendingIdx >= 0) {
       const pending = list[pendingIdx];
+      if (!pending) return;
       let concreteIdx = pendingIdx;
       if (pending.n > 1) {
         pending.n -= 1;
@@ -150,7 +151,7 @@ export function appendToolActivity(
 
       const line = list[concreteIdx];
       const prev = list[concreteIdx - 1];
-      if (prev && !prev.pendingDetail && prev.tool === line.tool) {
+      if (line && prev && !prev.pendingDetail && prev.tool === line.tool) {
         prev.n += line.n;
         list.splice(concreteIdx, 1);
         concreteIdx -= 1;
