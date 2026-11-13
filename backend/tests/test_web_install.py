@@ -25,7 +25,8 @@ with open(os.environ['QA_LOG'], 'a') as output:
         'bind':os.environ.get('KNOWE_BIND_HOST'),
         'node':os.environ.get('KNOWE_NODE_IMAGE'), 'python':os.environ.get('KNOWE_PYTHON_IMAGE'),
         'pip':os.environ.get('KNOWE_PIP_INDEX_URL'), 'apt':os.environ.get('KNOWE_APT_MIRROR'),
-        'browser':os.environ.get('KNOWE_PLAYWRIGHT_DOWNLOAD_HOST')})+'\n')
+        'browser':os.environ.get('KNOWE_PLAYWRIGHT_DOWNLOAD_HOST'),
+        'commit':os.environ.get('KNOWE_BUILD_COMMIT')})+'\n')
 if args == ['info']:
     sys.exit(int(os.environ.get('QA_DAEMON_FAIL','0')))
 if args[:2] == ['compose','version']:
@@ -280,6 +281,24 @@ def test_all_build_download_sources_are_mirrored_and_passed_to_compose(installer
     assert build['pip'] == values['KNOWE_PIP_INDEX_URL']
     assert build['apt'] == values['KNOWE_APT_MIRROR']
     assert build['browser'] == values['KNOWE_PLAYWRIGHT_DOWNLOAD_HOST']
+
+
+@pytest.mark.parametrize('dirty', [False, True])
+def test_source_revision_is_stamped_into_the_build_without_persisting_a_stale_setting(installer, dirty):
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(installer.root), *args], text=True,
+                                       stderr=subprocess.PIPE).strip()
+    git('init')
+    git('add', 'deploy/install.sh')
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'Installer')
+    revision = git('rev-parse', 'HEAD')
+    if dirty:
+        with (installer.root / 'deploy/install.sh').open('a') as script:
+            script.write('# local source change\n')
+    succeeded(installer.run())
+    build = next(call for call in installer.calls() if 'build' in call['args'])
+    assert build['commit'] == revision + ('-dirty' if dirty else '')
+    assert 'KNOWE_BUILD_COMMIT' not in installer.values()
 
 
 def test_official_mode_uses_official_package_and_browser_sources(installer):

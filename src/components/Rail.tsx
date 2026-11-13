@@ -11,6 +11,7 @@
 import React from 'react';
 import { isWebRuntime } from '../shared/deployment';
 import NotificationCenter from '../web/NotificationCenter';
+import { appVersionInfo } from '../shared/appVersion';
 import { useKnoweStore } from '../store/store';
 import { selectActiveView, selectCmdKOpen } from '../store/selectors';
 import { useSettingsStore } from '../store/settings';
@@ -29,6 +30,7 @@ interface RailItem {
 
 export const Rail: React.FC = () => {
   const { t } = useTranslation();
+  const build = appVersionInfo();
   const activeView = useKnoweStore(selectActiveView);
   const cmdKOpen = useKnoweStore(selectCmdKOpen);
   const setView = useKnoweStore((s) => s.setView);
@@ -131,6 +133,10 @@ export const Rail: React.FC = () => {
 
       {isWebRuntime() && <NotificationCenter />}
       <div className="rail-spacer" />
+      <div className="rail-version" title={build.commit ? `${t('app.build.commit')}: ${build.commit}` : undefined}>
+        <span aria-label={`${t('global.search.11')} ${build.version}`}>v{build.version}</span>
+        {build.shortCommit && <code aria-label={`${t('app.build.commit')} ${build.commit}`}>{build.shortCommit}</code>}
+      </div>
     </nav>
   );
 };

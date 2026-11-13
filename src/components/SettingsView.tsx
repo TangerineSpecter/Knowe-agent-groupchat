@@ -18,6 +18,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { isWebRuntime } from '../shared/deployment';
+import { appVersionInfo } from '../shared/appVersion';
 import type { BackendStatus, UpdateStatus } from '../shared/bridge';
 import { useKnoweStore } from '../store/store';
 import {
@@ -615,8 +616,8 @@ const AppearancePane: React.FC = () => {
 
 const AboutPane: React.FC = () => {
   const { t } = useTranslation();
-  // [v1.0.25.4] 产品版本号由主进程注入（package.json productVersion），不再写死
-  const shellVersion = bridge()?.version;
+  const build = appVersionInfo();
+  const shellVersion = build.version;
   // [v1.0.28 R5] 大版本号 = 版本号前两段（如 1.0.28 → 1.0），「桌面版」固定字样写死
   const majorVersion = shellVersion?.split('.').slice(0, 2).join('.');
   // [v1.0.25.4] 自动更新状态：挂载时查一次 + 订阅主进程推送
@@ -656,8 +657,12 @@ const AboutPane: React.FC = () => {
       <h4>{t('settings.view.09')}</h4>
       {/* [v1.0.28 R5] 标题下方显示大版本号（桌面版v1.0），右侧 tag 显示详细小版本号 v1.0.28 */}
       <SetItem t={t('global.search.11')} d={isWebRuntime() ? t('web.edition') : (majorVersion ? t('settings.view.desktopVersion', { version: majorVersion }) : undefined)}>
-        <span className="navrow-tag">{shellVersion ? `v${shellVersion}` : ''}</span>
+        <span className="app-version-value">v{shellVersion}</span>
       </SetItem>
+      {isWebRuntime() && <SetItem t={t('app.build.commit')}>
+        {build.commit ? <code className="about-build-commit">{build.commit}</code>
+          : <span className="app-version-value">{t('app.build.notRecorded')}</span>}
+      </SetItem>}
       <SetItem t={t('settings.view.12')} d={t('settings.view.19')}>
         <a
           className="set-link"

@@ -9,6 +9,7 @@ RUN npm ci --no-audit --no-fund --registry=$NPM_REGISTRY --fetch-retries=3
 COPY index.html tsconfig.json vite.web.config.ts ./
 COPY src ./src
 COPY public ./public
+ARG KNOWE_BUILD_COMMIT=
 RUN npm run web:build
 
 FROM ${PYTHON_IMAGE} AS runtime

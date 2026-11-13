@@ -334,6 +334,18 @@ save_setting KNOWE_PLAYWRIGHT_DOWNLOAD_HOST "$KNOWE_PLAYWRIGHT_DOWNLOAD_HOST"
 export KNOWE_PIP_INDEX_URL KNOWE_APT_MIRROR KNOWE_PLAYWRIGHT_DOWNLOAD_HOST
 printf '%s\n' '已配置 Python、Debian 和浏览器下载源，构建将保留下载缓存。'
 
+# Stamp the frontend at build time. Never overwrite this through runtime settings,
+# which could label an old --no-build image with a newer checkout's revision.
+deploy_build_commit=''
+if command -v git >/dev/null 2>&1; then
+  deploy_build_commit=$(git rev-parse --verify HEAD 2>/dev/null || :)
+  if [ -n "$deploy_build_commit" ] && [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    deploy_build_commit="${deploy_build_commit}-dirty"
+  fi
+fi
+KNOWE_BUILD_COMMIT=${deploy_build_commit:-${KNOWE_BUILD_COMMIT:-}}
+export KNOWE_BUILD_COMMIT
+
 printf '%s\n' '阶段 2/3：构建应用镜像（安装依赖、编译前端、安装 Chromium）；首次耗时较长。'
 docker compose --progress plain build knowe
 printf '%s\n' '阶段 3/3：启动并等待健康检查。'
