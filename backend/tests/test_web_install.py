@@ -22,7 +22,9 @@ if args[:3] == ['compose','--progress','plain'] and args[-2:] == ['pull','base-i
 root=pathlib.Path.cwd()
 with open(os.environ['QA_LOG'], 'a') as output:
     output.write(json.dumps({'args':args, 'port':os.environ.get('KNOWE_PORT'),
-        'node':os.environ.get('KNOWE_NODE_IMAGE'), 'python':os.environ.get('KNOWE_PYTHON_IMAGE')})+'\n')
+        'node':os.environ.get('KNOWE_NODE_IMAGE'), 'python':os.environ.get('KNOWE_PYTHON_IMAGE'),
+        'pip':os.environ.get('KNOWE_PIP_INDEX_URL'), 'apt':os.environ.get('KNOWE_APT_MIRROR'),
+        'browser':os.environ.get('KNOWE_PLAYWRIGHT_DOWNLOAD_HOST')})+'\n')
 if args == ['info']:
     sys.exit(int(os.environ.get('QA_DAEMON_FAIL','0')))
 if args[:2] == ['compose','version']:
@@ -210,6 +212,37 @@ def test_default_falls_back_to_official_when_mirror_fails(installer):
     assert pulls == ['m.daocloud.io/docker.io/library/node:22-bookworm-slim', 'node:22-bookworm-slim',
                      'm.daocloud.io/docker.io/library/python:3.11-slim-bookworm', 'python:3.11-slim-bookworm']
     assert installer.values()['KNOWE_NODE_IMAGE'] == 'node:22-bookworm-slim'
+
+
+def test_all_build_download_sources_are_mirrored_and_passed_to_compose(installer):
+    succeeded(installer.run())
+    values = installer.values()
+    assert values['KNOWE_PIP_INDEX_URL'] == 'https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple'
+    assert values['KNOWE_APT_MIRROR'] == 'https://mirrors.tuna.tsinghua.edu.cn'
+    assert values['KNOWE_PLAYWRIGHT_DOWNLOAD_HOST'] == 'https://cdn.npmmirror.com/binaries/playwright'
+    build = next(c for c in installer.calls() if 'build' in c['args'])
+    assert build['pip'] == values['KNOWE_PIP_INDEX_URL']
+    assert build['apt'] == values['KNOWE_APT_MIRROR']
+    assert build['browser'] == values['KNOWE_PLAYWRIGHT_DOWNLOAD_HOST']
+
+
+def test_official_mode_uses_official_package_and_browser_sources(installer):
+    succeeded(installer.run(KNOWE_DOWNLOAD_SOURCE='official'))
+    build = next(c for c in installer.calls() if 'build' in c['args'])
+    assert build['pip'] == 'https://pypi.org/simple'
+    assert build['apt'] == 'https://deb.debian.org'
+    assert build['browser'] == ''
+
+
+def test_existing_download_sources_and_empty_browser_host_are_preserved(installer):
+    installer.config('KNOWE_PIP_INDEX_URL=https://private.example/simple\n'
+                     'KNOWE_APT_MIRROR=https://private.example/debian-mirror\n'
+                     'KNOWE_PLAYWRIGHT_DOWNLOAD_HOST=\n')
+    succeeded(installer.run())
+    build = next(c for c in installer.calls() if 'build' in c['args'])
+    assert build['pip'] == 'https://private.example/simple'
+    assert build['apt'] == 'https://private.example/debian-mirror'
+    assert build['browser'] == ''
 
 
 def test_hanging_registry_pull_is_cancelled_and_mirror_is_saved(installer):

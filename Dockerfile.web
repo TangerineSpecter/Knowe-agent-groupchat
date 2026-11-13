@@ -18,7 +18,10 @@ ENV PYTHONUNBUFFERED=1 PYTHONUTF8=1 PYTHONPATH=/app/backend \
     KNOWE_AGENT=deepseek KNOWE_BROWSER_HEADLESS=1 \
     PLAYWRIGHT_BROWSERS_PATH=/opt/playwright HOME=/workspace/.home
 WORKDIR /app
-RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+ARG APT_MIRROR=https://mirrors.tuna.tsinghua.edu.cn
+RUN --mount=type=cache,id=knowe-web-apt,target=/var/cache/apt,sharing=locked \
+    python -c 'import os; from pathlib import Path; p=Path("/etc/apt/sources.list.d/debian.sources"); m=os.environ["APT_MIRROR"].rstrip("/"); p.write_text(p.read_text().replace("http://deb.debian.org", m).replace("https://deb.debian.org", m))' \
+    && rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get -o Acquire::Retries=3 update && apt-get -o Acquire::Retries=3 install -y --no-install-recommends git ca-certificates fonts-noto-cjk libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 # Debian bookworm in both stages: the Node binary and npm work without a second toolchain.
@@ -27,9 +30,20 @@ COPY --from=frontend /usr/local/lib/node_modules/npm /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 COPY backend/requirements-web.lock ./backend/requirements-web.lock
-RUN pip install --no-cache-dir --no-compile --require-hashes -r backend/requirements-web.lock
-RUN playwright install --with-deps --only-shell chromium \
+ARG PIP_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+RUN --mount=type=cache,id=knowe-web-pip,target=/root/.cache/pip,sharing=locked \
+    pip install --disable-pip-version-check --no-compile --require-hashes \
+    --index-url "$PIP_INDEX_URL" --timeout 30 --retries 3 -r backend/requirements-web.lock
+RUN --mount=type=cache,id=knowe-web-apt,target=/var/cache/apt,sharing=locked \
+    playwright install-deps chromium \
     && rm -rf /var/lib/apt/lists/*
+ARG TARGETARCH
+ARG PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
+RUN --mount=type=cache,id=knowe-web-browsers-${TARGETARCH},target=/root/.cache/knowe-playwright,sharing=locked \
+    PLAYWRIGHT_BROWSERS_PATH=/root/.cache/knowe-playwright \
+    PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=120000 \
+    PLAYWRIGHT_DOWNLOAD_HOST="$PLAYWRIGHT_DOWNLOAD_HOST" playwright install --only-shell chromium \
+    && mkdir -p /opt/playwright && cp -a /root/.cache/knowe-playwright/. /opt/playwright/
 COPY backend ./backend
 COPY --from=frontend /build/dist ./dist
 RUN groupadd --gid 1000 knowe && useradd --uid 1000 --gid 1000 --create-home knowe \

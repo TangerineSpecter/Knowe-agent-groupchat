@@ -8,6 +8,9 @@ services:
         NPM_REGISTRY: "${KNOWE_NPM_REGISTRY:-https://registry.npmjs.org}"
         NODE_IMAGE: "${KNOWE_NODE_IMAGE:-node:22-bookworm-slim}"
         PYTHON_IMAGE: "${KNOWE_PYTHON_IMAGE:-python:3.11-slim-bookworm}"
+        PIP_INDEX_URL: "${KNOWE_PIP_INDEX_URL:-https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple}"
+        APT_MIRROR: "${KNOWE_APT_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn}"
+        PLAYWRIGHT_DOWNLOAD_HOST: "${KNOWE_PLAYWRIGHT_DOWNLOAD_HOST-https://cdn.npmmirror.com/binaries/playwright}"
     init: true
     restart: unless-stopped
     user: "${KNOWE_UID:-1000}:${KNOWE_GID:-1000}"

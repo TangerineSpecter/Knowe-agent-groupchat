@@ -237,6 +237,30 @@ fi
 KNOWE_NPM_REGISTRY=$deploy_npm_registry
 export KNOWE_NODE_IMAGE KNOWE_PYTHON_IMAGE KNOWE_NPM_REGISTRY
 
+# Each package manager uses a separate repository. A Docker image mirror alone
+# does not speed up apt, pip or the browser binary downloaded during the build.
+deploy_pip_default=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+deploy_apt_default=https://mirrors.tuna.tsinghua.edu.cn
+deploy_browser_default=https://cdn.npmmirror.com/binaries/playwright
+if [ "$deploy_source" = official ]; then
+  deploy_pip_default=https://pypi.org/simple
+  deploy_apt_default=https://deb.debian.org
+  deploy_browser_default=''
+fi
+KNOWE_PIP_INDEX_URL=$(setting KNOWE_PIP_INDEX_URL "$deploy_pip_default")
+KNOWE_APT_MIRROR=$(setting KNOWE_APT_MIRROR "$deploy_apt_default")
+# An explicitly empty host selects Playwright's official CDN.
+if printf '%s\n' "$deploy_config" | grep -q '^KNOWE_PLAYWRIGHT_DOWNLOAD_HOST='; then
+  KNOWE_PLAYWRIGHT_DOWNLOAD_HOST=$(printf '%s\n' "$deploy_config" | sed -n 's/^KNOWE_PLAYWRIGHT_DOWNLOAD_HOST=//p')
+else
+  KNOWE_PLAYWRIGHT_DOWNLOAD_HOST=$deploy_browser_default
+fi
+save_setting KNOWE_PIP_INDEX_URL "$KNOWE_PIP_INDEX_URL"
+save_setting KNOWE_APT_MIRROR "$KNOWE_APT_MIRROR"
+save_setting KNOWE_PLAYWRIGHT_DOWNLOAD_HOST "$KNOWE_PLAYWRIGHT_DOWNLOAD_HOST"
+export KNOWE_PIP_INDEX_URL KNOWE_APT_MIRROR KNOWE_PLAYWRIGHT_DOWNLOAD_HOST
+printf '%s\n' '已配置 Python、Debian 和浏览器下载源，构建将保留下载缓存。'
+
 printf '%s\n' '阶段 2/3：构建应用镜像（安装依赖、编译前端、安装 Chromium）；首次耗时较长。'
 docker compose --progress plain build knowe
 # Dependencies may take minutes to build. Check again immediately before publishing.
