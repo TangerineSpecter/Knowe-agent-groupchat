@@ -22,12 +22,16 @@ if args[:3] == ['compose','--progress','plain'] and args[-2:] == ['pull','base-i
 root=pathlib.Path.cwd()
 with open(os.environ['QA_LOG'], 'a') as output:
     output.write(json.dumps({'args':args, 'port':os.environ.get('KNOWE_PORT'),
+        'bind':os.environ.get('KNOWE_BIND_HOST'),
         'node':os.environ.get('KNOWE_NODE_IMAGE'), 'python':os.environ.get('KNOWE_PYTHON_IMAGE'),
         'pip':os.environ.get('KNOWE_PIP_INDEX_URL'), 'apt':os.environ.get('KNOWE_APT_MIRROR'),
         'browser':os.environ.get('KNOWE_PLAYWRIGHT_DOWNLOAD_HOST')})+'\n')
 if args == ['info']:
     sys.exit(int(os.environ.get('QA_DAEMON_FAIL','0')))
 if args[:2] == ['compose','version']:
+    sys.exit(0)
+if args[:3] == ['compose','config','--images']:
+    print('knowe-web:local')
     sys.exit(0)
 if args[:3] == ['compose','config','--environment']:
     values={}
@@ -42,10 +46,15 @@ if args[:2] == ['compose','ps']:
     print(os.environ.get('QA_OWN_CONTAINER',''))
     sys.exit(0)
 if args[:2] == ['compose','port']:
-    print(os.environ.get('QA_OWN_BINDING',''))
+    print('' if (root/'runtime-stopped').exists() else os.environ.get('QA_OWN_BINDING',''))
+    sys.exit(0)
+if args[:2] == ['compose','stop']:
+    assert args[-1]=='knowe'
+    (root/'runtime-stopped').touch()
     sys.exit(0)
 if args[:2] == ['ps','--format']:
     for port in os.environ.get('QA_DOCKER_PORTS','').split(','):
+        if (root/'runtime-stopped').exists() and os.environ.get('QA_OWN_BINDING','').endswith(':'+port): continue
         if port: print('0.0.0.0:'+port+'->8090/tcp')
     sys.exit(0)
 if args[:2] == ['image','inspect']:
@@ -77,7 +86,12 @@ import os, pathlib
 ports=os.environ.get('QA_NATIVE_PORTS','').split(',')
 if pathlib.Path('build-race').exists(): ports += [os.environ.get('QA_BUILD_RACE','')]
 for port in ports:
+    if pathlib.Path('runtime-stopped').exists() and os.environ.get('QA_OWN_BINDING','').endswith(':'+port): continue
     if port: print('LISTEN 0 128 [::]:'+port+' [::]:*')
+'''
+MOCK_IP = r'''
+import os
+print('2: ens33 inet '+os.environ.get('QA_LAN_IP','10.20.30.40')+'/24 scope global ens33')
 '''
 
 
@@ -88,7 +102,7 @@ def installer(tmp_path):
     shutil.copy2(ROOT / 'deploy/install.sh', directory / 'deploy/install.sh')
     binary = tmp_path / 'bin'
     binary.mkdir()
-    for name, source in {'docker': MOCK_DOCKER, 'ss': MOCK_SS}.items():
+    for name, source in {'docker': MOCK_DOCKER, 'ss': MOCK_SS, 'ip': MOCK_IP}.items():
         target = binary / name
         target.write_text(f'#!{sys.executable}\n' + source)
         target.chmod(0o755)
@@ -110,8 +124,8 @@ def installer(tmp_path):
         bin = binary
         env = environment
 
-        def run(self, **changes):
-            return subprocess.run(['sh', str(self.root / 'deploy/install.sh')], cwd=tmp_path,
+        def run(self, *arguments, **changes):
+            return subprocess.run(['sh', str(self.root / 'deploy/install.sh'), *arguments], cwd=tmp_path,
                                   env={**self.env, **changes}, text=True, capture_output=True, timeout=25)
 
         def config(self, content):
@@ -136,7 +150,9 @@ def test_fresh_install_root_uses_nonroot_and_actual_new_port(installer):
     succeeded(result)
     assert installer.values()['KNOWE_PORT'] == '18090'
     assert installer.values()['KNOWE_UID'] == '1000'
+    assert installer.values()['KNOWE_BIND_HOST'] == '0.0.0.0'
     assert 'http://127.0.0.1:18090' in result.stdout
+    assert 'http://10.20.30.40:18090' in result.stdout
     assert len(Path(installer.env['QA_CHOWN']).read_text().splitlines()) == 3
     assert (installer.root / 'deploy/web-password').stat().st_mode & 0o777 == 0o600
     calls = installer.calls()
@@ -165,7 +181,7 @@ def test_legacy_failed_install_migrates_and_repeated_run_preserves_data(installe
 
 @pytest.mark.parametrize('has_container', [True, False])
 def test_existing_deployment_retains_8090_and_own_listener(installer, has_container):
-    installer.config('KNOWE_PORT=8090\n')
+    installer.config('KNOWE_PORT=8090\nKNOWE_BIND_HOST=127.0.0.1\n')
     state = installer.root / 'deploy/data/web'
     state.mkdir(parents=True)
     (state / 'session.key').write_text('persisted web instance')
@@ -173,6 +189,46 @@ def test_existing_deployment_retains_8090_and_own_listener(installer, has_contai
                'QA_DOCKER_PORTS': '8090', 'QA_NATIVE_PORTS': '8090'} if has_container else {}
     succeeded(installer.run(**changes))
     assert installer.values()['KNOWE_PORT'] == '8090'
+
+
+def test_existing_loopback_deployment_switches_to_lan_without_build_or_port_change(installer):
+    installer.config('KNOWE_PORT=18090\nKNOWE_BIND_HOST=127.0.0.1\n')
+    password = installer.root / 'deploy/web-password'
+    password.write_text('keep-existing-password')
+    result = installer.run('--lan', '--no-build', QA_OWN_CONTAINER='existing-knowe',
+                           QA_OWN_BINDING='127.0.0.1:18090', QA_DOCKER_PORTS='18090', QA_NATIVE_PORTS='18090')
+    succeeded(result)
+    assert installer.values()['KNOWE_BIND_HOST'] == '0.0.0.0'
+    assert installer.values()['KNOWE_PORT'] == '18090'
+    assert password.read_text() == 'keep-existing-password'
+    assert 'http://10.20.30.40:18090' in result.stdout
+    calls = installer.calls()
+    assert not any(c['args'][0]=='pull' or 'build' in c['args'] for c in calls)
+    assert any(c['args'][:2]==['compose','stop'] for c in calls)
+    up = next(c for c in calls if c['args'][:2]==['compose','up'])
+    assert up['bind']=='0.0.0.0' and up['port']=='18090'
+    assert '--no-build' in up['args'] and 'never' in up['args']
+
+
+@pytest.mark.parametrize('arguments,old_bind,expected', [
+    ([], '127.0.0.1', '127.0.0.1'),
+    (['--local'], '0.0.0.0', '127.0.0.1'),
+    ([], '192.168.5.113', '192.168.5.113'),
+])
+def test_local_and_custom_bindings_remain_explicit_choices(installer, arguments, old_bind, expected):
+    installer.config('KNOWE_BIND_HOST='+old_bind+'\n')
+    result = installer.run(*arguments, '--no-build')
+    succeeded(result)
+    assert installer.values()['KNOWE_BIND_HOST'] == expected
+    assert f'http://{expected}:18090' in result.stdout
+    assert 'http://10.20.30.40' not in result.stdout
+
+
+def test_no_build_missing_image_does_not_stop_the_running_service(installer):
+    result = installer.run('--lan', '--no-build', QA_UNCACHED='1', QA_OWN_CONTAINER='existing-knowe',
+                           QA_OWN_BINDING='127.0.0.1:18090')
+    assert result.returncode != 0 and '未找到已构建' in result.stderr
+    assert not any(c['args'][0]=='pull' or 'stop' in c['args'] or 'build' in c['args'] for c in installer.calls())
 
 
 def test_avoids_docker_native_and_ipv6_listeners(installer):

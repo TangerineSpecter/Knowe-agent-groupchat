@@ -4,6 +4,22 @@ set -eu
 cd "$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
+deploy_build=1
+deploy_bind_override=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --lan) deploy_bind_override=0.0.0.0;;
+    --local) deploy_bind_override=127.0.0.1;;
+    --no-build) deploy_build=0;;
+    -h|--help)
+      printf '%s\n' '用法：./deploy/install.sh [--lan|--local] [--no-build]' \
+        '新部署默认允许内网访问；--lan 更新旧配置；--local 仅限本机。' \
+        '--no-build 复用已构建镜像，仅更新运行配置，不拉取或构建镜像。'
+      exit 0;;
+    *) fail "未知参数：$1";;
+  esac
+  shift
+done
 command -v docker >/dev/null 2>&1 || fail '请先安装 Docker 和 Docker Compose。'
 docker compose version >/dev/null
 docker info >/dev/null 2>&1 || fail '无法连接 Docker，请确认 Docker 已启动且当前用户有访问权限。'
@@ -67,7 +83,8 @@ setting() {
     index($0, key "=")==1 { print substr($0, length(key)+2); exit }')
   printf '%s\n' "${deploy_value:-$2}"
 }
-deploy_bind_host=$(setting KNOWE_BIND_HOST 127.0.0.1)
+deploy_bind_host=$(setting KNOWE_BIND_HOST 0.0.0.0)
+if [ -n "$deploy_bind_override" ]; then deploy_bind_host=$deploy_bind_override; fi
 deploy_port=$(setting KNOWE_PORT 18090)
 deploy_port=$(printf '%s\n' "$deploy_port" | awk '/^[0-9]+$/ && $0>=1 && $0<=65535 {printf "%.0f", $0}')
 [ -n "$deploy_port" ] || fail 'KNOWE_PORT 必须是 1–65535 之间的整数。'
@@ -141,7 +158,63 @@ choose_port() {
   KNOWE_BIND_HOST=$deploy_bind_host
   export KNOWE_PORT KNOWE_BIND_HOST
 }
-choose_port
+
+lan_addresses() {
+  deploy_addresses=''
+  if command -v ip >/dev/null 2>&1; then
+    deploy_addresses=$(ip -o -4 addr show scope global 2>/dev/null | awk '
+      $2 !~ /^(lo|docker|br-|veth|virbr|cni|flannel)/ {
+        split($4, address, "/"); print address[1]
+      }')
+  fi
+  if [ -z "$deploy_addresses" ] && command -v ifconfig >/dev/null 2>&1; then
+    deploy_addresses=$(ifconfig 2>/dev/null | awk '
+      /^[^[:space:]]/ {interface=$1}
+      $1=="inet" && $2 !~ /^127\./ && interface !~ /^(lo|utun|tun|tap|docker|veth|virbr)/ {print $2}')
+  fi
+  if [ -z "$deploy_addresses" ]; then deploy_addresses=$(hostname -I 2>/dev/null || :); fi
+  printf '%s\n' "$deploy_addresses" | tr ' ' '\n' | awk '
+    /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && !/^127\./ && !seen[$0]++'
+}
+
+activate_service() {
+  deploy_old_binding=$(docker compose port knowe 8090 2>/dev/null || :)
+  if [ -n "$deploy_old_binding" ] && [ "$deploy_old_binding" != "$deploy_bind_host:$deploy_port" ] \
+    && [ "$deploy_old_binding" != "[$deploy_bind_host]:$deploy_port" ]; then
+    # Release this service's old listener before checking the wider/new binding.
+    # Other containers and host listeners are still checked by choose_port.
+    printf '%s\n' '更新 Knowe 的监听地址，保留原端口并重新检查占用。'
+    docker compose stop --timeout 40 knowe
+  fi
+  choose_port
+  docker compose up -d --no-build --pull never --wait --wait-timeout 180 knowe
+  case "$deploy_bind_host" in
+    0.0.0.0|::)
+      printf 'Knowe 已启动：宿主机端口 %s，本机访问 http://127.0.0.1:%s\n' "$deploy_port" "$deploy_port"
+      deploy_addresses=$(lan_addresses)
+      if [ -n "$deploy_addresses" ]; then
+        for deploy_address in $deploy_addresses; do
+          printf '内网访问：http://%s:%s\n' "$deploy_address" "$deploy_port"
+        done
+      else
+        printf '内网访问：http://<服务器内网IP>:%s\n' "$deploy_port"
+      fi;;
+    *:*) printf 'Knowe 已启动：http://[%s]:%s\n' "$deploy_bind_host" "$deploy_port";;
+    *) printf 'Knowe 已启动：http://%s:%s\n' "$deploy_bind_host" "$deploy_port";;
+  esac
+  printf '%s\n' '访问地址需要带上端口；监听地址和端口已保存至 .env。' \
+    '访问密码保存在 deploy/web-password；请自行读取并妥善保存。' \
+    '远程访问及 HTTPS 配置见 docs/CN/网页版部署.md。'
+}
+
+if [ "$deploy_build" -eq 0 ]; then
+  deploy_app_image=$(docker compose config --images knowe)
+  docker image inspect "$deploy_app_image" >/dev/null 2>&1 \
+    || fail '未找到已构建的 Knowe 镜像，请先执行 ./deploy/install.sh 完成构建。'
+  printf '%s\n' '复用已构建镜像，仅更新运行配置。'
+  activate_service
+  exit 0
+fi
 
 pull_image() {
   if docker image inspect "$1" >/dev/null 2>&1; then
@@ -263,15 +336,5 @@ printf '%s\n' '已配置 Python、Debian 和浏览器下载源，构建将保留
 
 printf '%s\n' '阶段 2/3：构建应用镜像（安装依赖、编译前端、安装 Chromium）；首次耗时较长。'
 docker compose --progress plain build knowe
-# Dependencies may take minutes to build. Check again immediately before publishing.
-choose_port
 printf '%s\n' '阶段 3/3：启动并等待健康检查。'
-docker compose up -d --no-build --wait --wait-timeout 180
-case "$deploy_bind_host" in
-  0.0.0.0|::) printf 'Knowe 已启动：宿主机端口 %s，请通过服务器地址或反向代理访问。\n' "$deploy_port";;
-  *:*) printf 'Knowe 已启动：http://[%s]:%s\n' "$deploy_bind_host" "$deploy_port";;
-  *) printf 'Knowe 已启动：http://%s:%s\n' "$deploy_bind_host" "$deploy_port";;
-esac
-printf '%s\n' '选用的端口和镜像源已保存至 .env，后续运行会复用。' \
-  '访问密码保存在 deploy/web-password；请自行读取并妥善保存。' \
-  '远程访问及 HTTPS 配置见 docs/CN/网页版部署.md。'
+activate_service
