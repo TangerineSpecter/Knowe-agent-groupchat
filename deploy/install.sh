@@ -69,7 +69,7 @@ deploy_bind_host=$(setting KNOWE_BIND_HOST 127.0.0.1)
 deploy_port=$(setting KNOWE_PORT 18090)
 deploy_port=$(printf '%s\n' "$deploy_port" | awk '/^[0-9]+$/ && $0>=1 && $0<=65535 {printf "%.0f", $0}')
 [ -n "$deploy_port" ] || fail 'KNOWE_PORT 必须是 1–65535 之间的整数。'
-deploy_source=$(setting KNOWE_DOWNLOAD_SOURCE auto)
+deploy_source=$(setting KNOWE_DOWNLOAD_SOURCE mirror)
 case "$deploy_source" in auto|mirror|official) ;; *) fail 'KNOWE_DOWNLOAD_SOURCE 仅支持 auto、mirror、official。';; esac
 deploy_pull_timeout=$(setting KNOWE_PULL_TIMEOUT 60)
 deploy_pull_timeout=$(printf '%s\n' "$deploy_pull_timeout" | awk '/^[0-9]+$/ && $0>=1 && $0<=3600 {printf "%.0f", $0}')

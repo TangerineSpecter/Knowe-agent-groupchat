@@ -185,8 +185,27 @@ def test_rechecks_port_after_long_build_and_overrides_exported_old_value(install
     assert next(c for c in installer.calls() if 'up' in c['args'])['port'] == '19001'
 
 
+def test_default_prefers_mirror_over_previously_selected_official_images(installer):
+    installer.config('KNOWE_NODE_IMAGE=node:22-bookworm-slim\n'
+                     'KNOWE_PYTHON_IMAGE=python:3.11-slim-bookworm\n')
+    succeeded(installer.run(QA_UNCACHED='1'))
+    pulls = [c['args'][1] for c in installer.calls() if c['args'][0] == 'pull']
+    assert len(pulls) == 2 and all(image.startswith('m.daocloud.io/') for image in pulls)
+    assert installer.values()['KNOWE_NODE_IMAGE'] == pulls[0]
+    assert installer.values()['KNOWE_NPM_REGISTRY'] == 'https://registry.npmmirror.com'
+
+
+def test_default_falls_back_to_official_when_mirror_fails(installer):
+    succeeded(installer.run(QA_UNCACHED='1', QA_MIRROR_PULL='fail'))
+    pulls = [c['args'][1] for c in installer.calls() if c['args'][0] == 'pull']
+    assert pulls == ['m.daocloud.io/docker.io/library/node:22-bookworm-slim', 'node:22-bookworm-slim',
+                     'm.daocloud.io/docker.io/library/python:3.11-slim-bookworm', 'python:3.11-slim-bookworm']
+    assert installer.values()['KNOWE_NODE_IMAGE'] == 'node:22-bookworm-slim'
+
+
 def test_hanging_registry_pull_is_cancelled_and_mirror_is_saved(installer):
-    result = installer.run(QA_UNCACHED='1', QA_OFFICIAL_PULL='hang', KNOWE_PULL_TIMEOUT='1')
+    result = installer.run(QA_UNCACHED='1', QA_OFFICIAL_PULL='hang', KNOWE_PULL_TIMEOUT='1',
+                           KNOWE_DOWNLOAD_SOURCE='auto')
     succeeded(result)
     assert installer.values()['KNOWE_NODE_IMAGE'].startswith('m.daocloud.io/')
     assert installer.values()['KNOWE_PYTHON_IMAGE'].startswith('m.daocloud.io/')
@@ -251,7 +270,8 @@ def test_does_not_replace_a_real_host_tcp_listener(installer):
 
 def test_termination_cleans_up_active_pull(installer):
     process = subprocess.Popen(['sh', str(installer.root / 'deploy/install.sh')],
-                               cwd=installer.root, env={**installer.env, 'QA_UNCACHED':'1', 'QA_OFFICIAL_PULL':'hang'},
+                               cwd=installer.root, env={**installer.env, 'QA_UNCACHED':'1', 'QA_OFFICIAL_PULL':'hang',
+                                                        'KNOWE_DOWNLOAD_SOURCE':'auto'},
                                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         deadline = time.monotonic() + 5
