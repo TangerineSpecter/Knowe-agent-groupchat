@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[2]
 MOCK_DOCKER = r'''
 import json, os, pathlib, sys, time
 args=sys.argv[1:]
+if args[:3] == ['compose','--progress','plain'] and args[-2:] == ['pull','base-image']:
+    args=['pull',os.environ['KNOWE_INSTALL_PULL_IMAGE']]
 root=pathlib.Path.cwd()
 with open(os.environ['QA_LOG'], 'a') as output:
     output.write(json.dumps({'args':args, 'port':os.environ.get('KNOWE_PORT'),
@@ -53,6 +55,13 @@ if args[:1] == ['pull']:
     if mode == 'hang':
         with open(os.environ['QA_PULL_PIDS'],'a') as output: output.write(str(os.getpid())+'\n')
         time.sleep(30)
+    if mode in ('progress', 'progress-then-stall'):
+        for size in range(12):
+            print('layer Downloading '+str(size)+'MB/12MB', flush=True)
+            time.sleep(.25)
+        if mode == 'progress-then-stall':
+            with open(os.environ['QA_PULL_PIDS'],'a') as output: output.write(str(os.getpid())+'\n')
+            time.sleep(30)
     sys.exit(1 if mode == 'fail' else 0)
 if args[:4] == ['compose','--progress','plain','build']:
     if os.environ.get('QA_BUILD_RACE'): (root/'build-race').touch()
@@ -210,11 +219,30 @@ def test_hanging_registry_pull_is_cancelled_and_mirror_is_saved(installer):
     assert installer.values()['KNOWE_NODE_IMAGE'].startswith('m.daocloud.io/')
     assert installer.values()['KNOWE_PYTHON_IMAGE'].startswith('m.daocloud.io/')
     assert installer.values()['KNOWE_NPM_REGISTRY'] == 'https://registry.npmmirror.com'
-    assert '切换到' in result.stdout and '超过 1 秒' in result.stderr
+    assert '切换到' in result.stdout and '连续 1 秒没有新的镜像拉取进度' in result.stderr
     for pid in Path(installer.env['QA_PULL_PIDS']).read_text().splitlines():
         with pytest.raises(ProcessLookupError): os.kill(int(pid), 0)
     up = next(c for c in installer.calls() if 'up' in c['args'])
     assert up['node'] == installer.values()['KNOWE_NODE_IMAGE']
+
+
+def test_continuous_download_progress_can_exceed_the_idle_timeout(installer):
+    started = time.monotonic()
+    result = installer.run(QA_UNCACHED='1', QA_MIRROR_PULL='progress', KNOWE_PULL_TIMEOUT='1')
+    succeeded(result)
+    assert time.monotonic() - started > 6
+    assert '11MB/12MB' in result.stdout
+    assert '停止本次拉取' not in result.stderr and '切换到' not in result.stdout
+    assert all(c['args'][1].startswith('m.daocloud.io/') for c in installer.calls() if c['args'][0] == 'pull')
+
+
+def test_idle_deadline_starts_after_the_last_progress_update(installer):
+    result = installer.run(QA_UNCACHED='1', QA_MIRROR_PULL='progress-then-stall', KNOWE_PULL_TIMEOUT='1')
+    succeeded(result)
+    assert '11MB/12MB' in result.stdout and '停止本次拉取' in result.stderr
+    assert installer.values()['KNOWE_NODE_IMAGE'] == 'node:22-bookworm-slim'
+    for pid in Path(installer.env['QA_PULL_PIDS']).read_text().splitlines():
+        with pytest.raises(ProcessLookupError): os.kill(int(pid), 0)
 
 
 def test_custom_registry_and_quoted_settings_are_preserved(installer):

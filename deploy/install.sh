@@ -9,15 +9,17 @@ docker compose version >/dev/null
 docker info >/dev/null 2>&1 || fail '无法连接 Docker，请确认 Docker 已启动且当前用户有访问权限。'
 
 deploy_pull_pid=''
-deploy_timer_pid=''
+deploy_progress_pid=''
+deploy_pull_dir=''
 deploy_env_tmp=''
 cleanup() {
-  for deploy_job in "$deploy_pull_pid" "$deploy_timer_pid"; do
+  for deploy_job in "$deploy_pull_pid" "$deploy_progress_pid"; do
     if [ -n "$deploy_job" ]; then
       kill "$deploy_job" 2>/dev/null || :
       wait "$deploy_job" 2>/dev/null || :
     fi
   done
+  if [ -n "$deploy_pull_dir" ]; then rm -rf "$deploy_pull_dir"; fi
   if [ -n "$deploy_env_tmp" ]; then rm -f "$deploy_env_tmp"; fi
 }
 trap cleanup 0
@@ -73,7 +75,7 @@ deploy_source=$(setting KNOWE_DOWNLOAD_SOURCE mirror)
 case "$deploy_source" in auto|mirror|official) ;; *) fail 'KNOWE_DOWNLOAD_SOURCE 仅支持 auto、mirror、official。';; esac
 deploy_pull_timeout=$(setting KNOWE_PULL_TIMEOUT 60)
 deploy_pull_timeout=$(printf '%s\n' "$deploy_pull_timeout" | awk '/^[0-9]+$/ && $0>=1 && $0<=3600 {printf "%.0f", $0}')
-[ -n "$deploy_pull_timeout" ] || fail 'KNOWE_PULL_TIMEOUT 必须是 1–3600 之间的秒数。'
+[ -n "$deploy_pull_timeout" ] || fail 'KNOWE_PULL_TIMEOUT 必须是 1–3600 之间的无进度等待秒数。'
 
 deploy_current_id=$(docker compose ps --all --quiet knowe)
 deploy_data_path=$(setting KNOWE_DATA_PATH ./deploy/data)
@@ -146,26 +148,49 @@ pull_image() {
     printf '复用本地基础镜像：%s\n' "$1"
     return 0
   fi
-  printf '拉取基础镜像（最多 %s 秒）：%s\n' "$deploy_pull_timeout" "$1"
-  docker pull "$1" &
+  printf '拉取基础镜像（连续 %s 秒无进度才换源，总时长不限）：%s\n' "$deploy_pull_timeout" "$1"
+  deploy_pull_dir=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/knowe-pull.XXXXXX") || fail '无法创建拉取进度目录。'
+  # Plain Compose progress includes layer byte counts even when piped. Ordinary
+  # `docker pull` hides those updates without a TTY, making idle detection unsafe.
+  cat > "$deploy_pull_dir/compose.yaml" <<'PULL_CONFIG'
+services:
+  base-image:
+    image: ${KNOWE_INSTALL_PULL_IMAGE:?}
+PULL_CONFIG
+  mkfifo "$deploy_pull_dir/output.pipe" || fail '无法创建拉取进度管道。'
+  : > "$deploy_pull_dir/progress.log"
+  tee "$deploy_pull_dir/progress.log" < "$deploy_pull_dir/output.pipe" &
+  deploy_progress_pid=$!
+  KNOWE_INSTALL_PULL_IMAGE="$1" docker compose --progress plain \
+    --project-name knowe-installer-pull --file "$deploy_pull_dir/compose.yaml" \
+    pull base-image > "$deploy_pull_dir/output.pipe" 2>&1 &
   deploy_pull_pid=$!
-  sleep "$deploy_pull_timeout" &
-  deploy_timer_pid=$!
   deploy_pull_status=0
+  deploy_progress_size=0
+  deploy_idle_seconds=0
   while kill -0 "$deploy_pull_pid" 2>/dev/null; do
-    if ! kill -0 "$deploy_timer_pid" 2>/dev/null; then
-      printf '镜像下载超过 %s 秒，停止本次拉取。\n' "$deploy_pull_timeout" >&2
+    sleep 1
+    deploy_next_size=$(wc -c < "$deploy_pull_dir/progress.log")
+    if [ "$deploy_next_size" -ne "$deploy_progress_size" ]; then
+      deploy_progress_size=$deploy_next_size
+      deploy_idle_seconds=0
+    else
+      deploy_idle_seconds=$((deploy_idle_seconds+1))
+    fi
+    if [ "$deploy_idle_seconds" -ge "$deploy_pull_timeout" ] \
+      && kill -0 "$deploy_pull_pid" 2>/dev/null; then
+      printf '连续 %s 秒没有新的镜像拉取进度，停止本次拉取。\n' "$deploy_pull_timeout" >&2
       kill "$deploy_pull_pid" 2>/dev/null || :
       deploy_pull_status=1
       break
     fi
-    sleep 1
   done
   if ! wait "$deploy_pull_pid"; then deploy_pull_status=1; fi
-  kill "$deploy_timer_pid" 2>/dev/null || :
-  wait "$deploy_timer_pid" 2>/dev/null || :
+  wait "$deploy_progress_pid" || deploy_pull_status=1
   deploy_pull_pid=''
-  deploy_timer_pid=''
+  deploy_progress_pid=''
+  rm -rf "$deploy_pull_dir"
+  deploy_pull_dir=''
   return "$deploy_pull_status"
 }
 
