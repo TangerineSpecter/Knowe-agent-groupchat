@@ -201,6 +201,7 @@ const FullCard: React.FC<{ projectId: string; entry: DirectoryEntry }> = ({ proj
           onChange={setDir}
           label={t('common.04')}
           required
+          disabled={submitting || timedOut}
           showError={dirBad}
         />
       </div>

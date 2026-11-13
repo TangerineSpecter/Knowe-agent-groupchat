@@ -4,8 +4,8 @@ import { WEB_DIRECTORY_PENDING } from '../shared/deployment';
 import { webRequest } from './api';
 
 interface DirectoryPage { path: string; root: string; directories: string[] }
-export default function ServerDirectoryPicker({ value, onChange, allowAuto = false }: {
-  value: string; onChange: (value: string) => void; allowAuto?: boolean;
+export default function ServerDirectoryPicker({ value, onChange, allowAuto = false, disabled = false, showError = false }: {
+  value: string; onChange: (value: string) => void; allowAuto?: boolean; disabled?: boolean; showError?: boolean;
 }): React.ReactElement {
   const { t } = useTranslation();
   const [browse, setBrowse] = useState(!allowAuto || Boolean(value));
@@ -19,8 +19,10 @@ export default function ServerDirectoryPicker({ value, onChange, allowAuto = fal
     finally { setLoading(false); }
   };
   useEffect(() => { if (browse && !page) void load(value === WEB_DIRECTORY_PENDING ? '' : value); }, [browse]);
+  const needsPick = showError && browse && (!value.trim() || value === WEB_DIRECTORY_PENDING);
   return <div className="web-directory">
-    {allowAuto && <select aria-label={t('web.directory.mode')} value={browse ? 'existing' : 'auto'} onChange={(event) => {
+    {allowAuto && <select aria-label={t('web.directory.mode')} className={needsPick ? 'needs-pick' : undefined}
+      disabled={disabled} value={browse ? 'existing' : 'auto'} onChange={(event) => {
       const existing = event.target.value === 'existing';
       setBrowse(existing); onChange(existing ? WEB_DIRECTORY_PENDING : '');
     }}>
@@ -32,16 +34,17 @@ export default function ServerDirectoryPicker({ value, onChange, allowAuto = fal
       <div className="web-directory-browser" aria-busy={loading}>
         {page && <>
           <span className="web-directory-path">{page.path}</span>
-          <button type="button" className="btn btn-primary" disabled={loading} onClick={() => onChange(page.path)}>{t('web.directory.use')}</button>
-          {page.path !== page.root && <button type="button" className="btn btn-ghost" disabled={loading}
+          <button type="button" className="btn btn-primary" disabled={disabled || loading} onClick={() => onChange(page.path)}>{t('web.directory.use')}</button>
+          {page.path !== page.root && <button type="button" className="btn btn-ghost" disabled={disabled || loading}
             onClick={() => { void load(page.path.slice(0, page.path.lastIndexOf('/'))); }}>{t('web.directory.up')}</button>}
-          {page.directories.map((name) => <button type="button" className="btn btn-ghost" disabled={loading} key={name}
+          {page.directories.map((name) => <button type="button" className="btn btn-ghost" disabled={disabled || loading} key={name}
             onClick={() => { void load(`${page.path}/${name}`); }}>{name}/</button>)}
           {page.directories.length === 0 && <span className="web-directory-path">{t('web.directory.empty')}</span>}
         </>}
         {loading && <span role="status">{t('web.directory.loading')}</span>}
-        {error && <><span className="web-error" role="alert">{error}</span><button type="button" className="btn btn-ghost" onClick={() => { void load(); }}>{t('web.retry')}</button></>}
+        {error && <><span className="web-error" role="alert">{error}</span><button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => { void load(); }}>{t('web.retry')}</button></>}
       </div>
+      {needsPick && <div className="dir-hint" role="alert">{t('directory.picker.hint')}</div>}
     </>}
   </div>;
 }

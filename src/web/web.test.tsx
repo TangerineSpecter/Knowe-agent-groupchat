@@ -41,6 +41,17 @@ it('defaults to automatic directory creation and can choose an existing server d
   expect(onChange).toHaveBeenCalledWith('/workspace');
 });
 
+it('shows validation error and disables directory controls when requested', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ path: '/workspace', root: '/workspace', directories: [] }))));
+  const { rerender } = render(<ServerDirectoryPicker value="web:choose-directory" onChange={() => {}} allowAuto showError />);
+  expect(screen.getByLabelText('项目文件夹创建方式')).toHaveClass('needs-pick');
+  expect(screen.getByRole('alert')).toBeVisible();
+  await screen.findByRole('button', { name: '使用当前文件夹' });
+  rerender(<ServerDirectoryPicker value="web:choose-directory" onChange={() => {}} allowAuto disabled />);
+  expect(screen.getByLabelText('项目文件夹创建方式')).toBeDisabled();
+  expect(screen.getByRole('button', { name: '使用当前文件夹' })).toBeDisabled();
+});
+
 it('reads server settings before mounting the application, avoiding a false first-run gate', async () => {
   let resolve!: (value: Awaited<ReturnType<ReturnType<typeof useSettingsStore.getState>['reconcileFromBackend']>>) => void;
   vi.spyOn(useSettingsStore.getState(), 'reconcileFromBackend').mockImplementation(() => new Promise(done => { resolve = done; }));

@@ -493,6 +493,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = React.memo(({
             onChange={setDir}
             label={t('common.04')}
             required
+            disabled={!pending || submitted || timedOut}
             showError={dirBad}          /* [v0.8c #4a] 按过确认、还空着 → 这才标红 */
           />
         </div>

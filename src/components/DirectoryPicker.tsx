@@ -43,6 +43,8 @@ export interface DirectoryPickerProps {
    *   由父组件（NewProjectModal / ApprovalCard）在提交失败那一刻把它置为 true。
    */
   showError?: boolean;
+  /** 是否禁用交互（如审批卡已落定/超时） */
+  disabled?: boolean;
   /**
    * [v0.7b #1 · 保留] 这个字段是必填的。
    *
@@ -64,6 +66,7 @@ export const DirectoryPicker: React.FC<DirectoryPickerProps> = ({
   placeholder,
   required = true,
   showError = false,
+  disabled = false,
 }) => {
   const { t } = useTranslation();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -112,7 +115,7 @@ export const DirectoryPicker: React.FC<DirectoryPickerProps> = ({
     setNote(t('directory.picker.04'));
   }, [onChange, t]);
 
-  if (isWebRuntime()) return <ServerDirectoryPicker value={value} onChange={onChange} allowAuto={allowAuto} />;
+  if (isWebRuntime()) return <ServerDirectoryPicker value={value} onChange={onChange} allowAuto={allowAuto} disabled={disabled} showError={showError} />;
 
   const empty = !value.trim();
   // [v0.8b #6] 只有「必填 + 空着 + 用户已经按过创建」三者同时成立，才亮红
@@ -124,6 +127,7 @@ export const DirectoryPicker: React.FC<DirectoryPickerProps> = ({
         className={'modal-input dir-path' + (bad ? ' needs-pick' : '')}
         value={value}
         readOnly
+        disabled={disabled}
         placeholder={placeholder ?? t('directory.picker.05')}
         aria-label={label ?? t('common.04')}
         title={value || (placeholder ?? t('directory.picker.05'))}
@@ -133,6 +137,7 @@ export const DirectoryPicker: React.FC<DirectoryPickerProps> = ({
       <button
         type="button"
         className={'btn dir-pick ' + (bad ? 'btn-primary' : 'btn-ghost')}
+        disabled={disabled}
         onClick={pick}
       >
         {empty ? t('directory.picker.06') : t('directory.picker.03')}

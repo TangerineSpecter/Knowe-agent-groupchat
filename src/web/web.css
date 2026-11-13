@@ -14,11 +14,34 @@
 .web-runtime .win { grid-template-rows: minmax(0, 1fr); }
 .web-runtime #root { height: 100dvh; }
 :where(.web-runtime) :where(:focus-visible:not([contenteditable])) { outline: 2px solid var(--accent); outline-offset: 3px; }
-.web-directory { display: grid; gap: 10px; }
-.web-directory select { width: 100%; padding: 10px; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r-xs); }
-.web-directory-browser { display: grid; gap: 8px; max-height: 240px; overflow: auto; padding: 12px; background: var(--surface-2); border-radius: var(--r-xs); }
-.web-directory-browser button { text-align: start; min-height: 36px; }
-.web-directory-path { color: var(--ink-2); overflow-wrap: anywhere; font-size: 13px; }
+.web-directory { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; width: 100%; min-width: 0; flex: 1; }
+.web-directory select {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0 32px 0 12px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background-color: var(--surface-sunken);
+  background-image: url("data:image/svg+xml,%3Csvg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23A09E96' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+.web-directory select:focus, .web-directory select:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+.web-directory select.needs-pick { box-shadow: inset 0 0 0 1px #e0245e; border-color: #e0245e; }
+.web-directory select:disabled { background-color: var(--surface-2); color: var(--ink-3); cursor: default; }
+.approval .web-directory select { height: 34px; padding: 0 30px 0 10px; background-color: var(--surface); border-radius: var(--r-xs); }
+.approval .web-directory select:disabled { background-color: var(--surface-sunken); color: var(--ink-3); }
+.web-directory-browser { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; max-height: 240px; overflow: auto; padding: 12px; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: var(--r-xs); }
+.web-directory-browser button { width: 100%; height: auto; text-align: start; min-height: 36px; padding: 6px 12px; }
+.web-directory-browser .btn-ghost { background: var(--surface); border: 1px solid var(--hairline); }
+.web-directory-path { color: var(--ink-2); overflow-wrap: anywhere; font-size: 12px; line-height: 18px; }
 .web-rail-bell { position: relative; }
 .web-notice-count { position: absolute; top: 0; right: 0; min-width: 16px; padding: 0 3px; border-radius: 10px; color: var(--fill-ink); background: var(--danger); font-size: 10px; line-height: 16px; }
 .web-notifications { position: fixed; inset: 0 0 0 auto; width: min(440px, calc(100vw - 64px)); background: var(--surface); z-index: 5000; border-left: 1px solid var(--hairline); display: flex; flex-direction: column; }
