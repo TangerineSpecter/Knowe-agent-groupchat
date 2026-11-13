@@ -12,7 +12,7 @@ services:
     restart: unless-stopped
     user: "${KNOWE_UID:-1000}:${KNOWE_GID:-1000}"
     ports:
-      - "${KNOWE_BIND_HOST:-127.0.0.1}:${KNOWE_PORT:-8090}:8090"
+      - "${KNOWE_BIND_HOST:-127.0.0.1}:${KNOWE_PORT:-18090}:8090"
     environment:
       KNOWE_WEB_PASSWORD_FILE: /run/secrets/web_password
       KNOWE_WEB_ORIGIN: "${KNOWE_WEB_ORIGIN:-}"
