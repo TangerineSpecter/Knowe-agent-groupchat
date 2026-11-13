@@ -114,6 +114,29 @@ function fmt(sec: number): string {
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }
 
+/**
+ * 后端「永不超时」的哨兵时间戳（gate.py: NEVER_EXPIRES_AT = "9999-12-31T23:59:59Z"）。
+ * 不限时卡不启动超时定时器；其他有限截止时间仍按服务端给出的时间到期。
+ */
+const NEVER_EXPIRES_AT = '9999-12-31T23:59:59Z';
+const MAX_SET_TIMEOUT_MS = 2_147_483_647;
+
+type DeadlineInfo =
+  | { kind: 'invalid' }
+  | { kind: 'never' }
+  | { kind: 'finite'; deadlineMs: number };
+
+function parseDeadline(expiresAt: string): DeadlineInfo {
+  if (!expiresAt) return { kind: 'invalid' };
+  if (expiresAt === NEVER_EXPIRES_AT) return { kind: 'never' };
+  const deadlineMs = new Date(expiresAt).getTime();
+  if (Number.isNaN(deadlineMs)) return { kind: 'invalid' };
+  if (new Date(deadlineMs).getUTCFullYear() >= 9999) {
+    return { kind: 'never' };
+  }
+  return { kind: 'finite', deadlineMs };
+}
+
 export interface ApprovalCardProps {
   cardId: string;
   projectId: string;
@@ -303,11 +326,19 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = React.memo(({
    */
   const [timedOut, setTimedOut] = useState(false);
   useEffect(() => {
-    if (!pending || !expiresAt) { setTimedOut(false); return; }
-    const ms = new Date(expiresAt).getTime() - Date.now();
-    if (ms <= 0) { setTimedOut(true); return; }
-    const t = setTimeout(() => setTimedOut(true), ms);
-    return () => clearTimeout(t);
+    if (!pending) { setTimedOut(false); return; }
+    const info = parseDeadline(expiresAt);
+    if (info.kind !== 'finite') { setTimedOut(false); return; }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (): void => {
+      const ms = info.deadlineMs - Date.now();
+      if (ms <= 0) { setTimedOut(true); return; }
+      setTimedOut(false);
+      // 防止 > 24.8 天的有限超时在 32 位 setTimeout 中溢出为 1ms 立即触发
+      timer = setTimeout(schedule, Math.min(ms, MAX_SET_TIMEOUT_MS));
+    };
+    schedule();
+    return () => { if (timer !== undefined) clearTimeout(timer); };
   }, [pending, expiresAt]);
 
   /*
@@ -671,24 +702,28 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = React.memo(({
 
 /**
  * 倒计时文本（ap-count）。memo 小组件：自己每秒 tick、只重渲染自己那个 span。
- * 超时显示「已超时」（approval.card.03），未超时显示「剩余 M:SS」。
+ * 永不超时显示「永不超时」（global.search.08），超时显示「已超时」（approval.card.03），未超时显示「剩余 M:SS」。
  */
 const CountdownLabel: React.FC<{ expiresAt: string }> = React.memo(({ expiresAt }) => {
   const { t } = useTranslation();
   const active = useSessionActive();
   const [remain, setRemain] = useState<number | null>(null);
+  const isNever = parseDeadline(expiresAt).kind === 'never';
 
   useEffect(() => {
+    const info = parseDeadline(expiresAt);
+    if (info.kind !== 'finite') { setRemain(null); return; }
     // [v1.0.24.6-P0] 隐藏会话停摆：不跑倒计时（恢复时重新计算剩余时间）
     if (!active) return;
-    const deadline = new Date(expiresAt).getTime();
-    if (Number.isNaN(deadline)) { setRemain(null); return; }
-    const tick = (): void => setRemain((deadline - Date.now()) / 1000);
+    const tick = (): void => setRemain((info.deadlineMs - Date.now()) / 1000);
     tick();
     const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
   }, [expiresAt, active]);
 
+  if (isNever) {
+    return <span className="ap-count">{t('global.search.08')}</span>;
+  }
   if (remain === null) return null;
   return (
     <span className="ap-count">
@@ -699,20 +734,21 @@ const CountdownLabel: React.FC<{ expiresAt: string }> = React.memo(({ expiresAt 
 
 /**
  * 倒计时进度条（ap-progress）。纯 ref 直改宽度（铁律：imperative element.style），
- * 零 setState → 永不触发 React 重渲染。总时长以首次 tick 时的剩余为准。
+ * 零 setState → 永不触发 React 重渲染。总时长以首次 tick 时的剩余为准；永不超时不渲染进度条。
  */
 const CountdownBar: React.FC<{ expiresAt: string }> = React.memo(({ expiresAt }) => {
   const barRef = useRef<HTMLDivElement>(null);
   const totalRef = useRef<number | null>(null);
   const active = useSessionActive();
+  const isFiniteDeadline = parseDeadline(expiresAt).kind === 'finite';
 
   useEffect(() => {
+    const info = parseDeadline(expiresAt);
+    if (info.kind !== 'finite') return;
     // [v1.0.24.6-P0] 隐藏会话停摆：不跑进度条（恢复时从当前剩余重新起）
     if (!active) return;
-    const deadline = new Date(expiresAt).getTime();
-    if (Number.isNaN(deadline)) return;
     const tick = (): void => {
-      const left = (deadline - Date.now()) / 1000;
+      const left = (info.deadlineMs - Date.now()) / 1000;
       if (totalRef.current === null) totalRef.current = Math.max(left, 1);
       const bar = barRef.current;
       if (bar && totalRef.current) {
@@ -728,6 +764,7 @@ const CountdownBar: React.FC<{ expiresAt: string }> = React.memo(({ expiresAt })
     return () => clearInterval(timer);
   }, [expiresAt, active]);
 
+  if (!isFiniteDeadline) return null;
   return <div className="ap-progress" ref={barRef} />;
 });
 
