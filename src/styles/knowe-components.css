@@ -594,6 +594,7 @@ html.dark .composer.focus {background:var(--surface-sunken)}
   font-size:15px;line-height:24px;padding:6px 0;max-height:132px;
   background:transparent;outline:none;overflow-y:auto;
   word-break:break-word;white-space:pre-wrap;}
+.composer .tiptap-input:focus,.composer .tiptap-input:focus-visible {outline:none}
 .composer .tiptap-input > *:first-child {margin-top:0}
 .composer .tiptap-input > *:last-child {margin-bottom:0}
 .composer .tiptap-input p {margin:0}

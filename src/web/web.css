@@ -4,6 +4,7 @@
 .web-entry-form p { margin: 0; line-height: 1.7; color: var(--ink-2); }
 .web-entry-form label { font-weight: 600; }
 .web-entry-form input { width: 100%; min-height: 46px; padding: 10px 12px; font: inherit; font-size: 16px; border: 1px solid var(--hairline); border-radius: var(--r-xs); background: var(--surface); color: var(--ink); }
+.web-entry-form input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .web-entry-form button { min-height: 44px; }
 .web-entry-form .web-error, .web-error { color: var(--danger); }
 .web-loading { padding: 32px; color: var(--ink-2); }
@@ -12,7 +13,7 @@
 .web-runtime .titlebar { display: none; }
 .web-runtime .win { grid-template-rows: minmax(0, 1fr); }
 .web-runtime #root { height: 100dvh; }
-.web-runtime :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+:where(.web-runtime) :where(:focus-visible:not([contenteditable])) { outline: 2px solid var(--accent); outline-offset: 3px; }
 .web-directory { display: grid; gap: 10px; }
 .web-directory select { width: 100%; padding: 10px; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--r-xs); }
 .web-directory-browser { display: grid; gap: 8px; max-height: 240px; overflow: auto; padding: 12px; background: var(--surface-2); border-radius: var(--r-xs); }
