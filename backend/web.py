@@ -67,6 +67,7 @@ def log_origin_rejection(request: web.Request, config: WebConfig) -> None:
     details = {'origin': diagnostic_origin(request.headers.get('Origin')),
                'server': diagnostic_origin(f'{request.scheme}://{request.host}'),
                'configured': bool(config.public_origin),
+               'zspace_loopback_compat': config.zspace_loopback_compat,
                'expected': diagnostic_origin(config.public_origin or f'{request.scheme}://{request.host}')}
     log.warning('origin_rejected %s', json.dumps(details, ensure_ascii=True, sort_keys=True))
 
@@ -103,6 +104,7 @@ class WebConfig:
     ws_url: str = 'ws://127.0.0.1:8080'
     public_origin: str = ''
     secure_cookie: bool = False
+    zspace_loopback_compat: bool = False
 
     def session(self) -> str:
         value = f'{int(time.time()) + SESSION_SECONDS}.{secrets.token_hex(16)}'
@@ -120,7 +122,14 @@ class WebConfig:
     def same_origin(self, request: web.Request) -> bool:
         origin = request.headers.get('Origin', '')
         expected = self.public_origin or f'{request.scheme}://{request.host}'
-        return origin == expected
+        if origin == expected:
+            return True
+        if not self.zspace_loopback_compat:
+            return False
+        # Explicit opt-in for an isolated, trusted client-side proxy. Loopback
+        # is NOT proof of the client identity; password/session checks still apply.
+        match = re.fullmatch(r'http://127\.0\.0\.1:([1-9][0-9]{0,4})', origin)
+        return bool(match and int(match[1]) <= 65535)
 
 
 def create_app(config: WebConfig, runtime=None, runtime_stopped: asyncio.Event | None = None) -> web.Application:
@@ -524,8 +533,12 @@ def main():
                        dist=Path(os.environ.get('KNOWE_WEB_DIST', 'dist')).resolve(),
                        http_base=f'http://127.0.0.1:{CONFIG.health_port}', ws_url=f'ws://127.0.0.1:{CONFIG.ws_port}',
                        public_origin=os.environ.get('KNOWE_WEB_ORIGIN', '').rstrip('/'),
-                       secure_cookie=os.environ.get('KNOWE_WEB_SECURE_COOKIE', '0') == '1')
+                       secure_cookie=os.environ.get('KNOWE_WEB_SECURE_COOKIE', '0') == '1',
+                       zspace_loopback_compat=os.environ.get('KNOWE_WEB_ZSPACE_COMPAT', '0') == '1')
     logging.basicConfig(level=logging.INFO)
+    if config.zspace_loopback_compat:
+        log.warning('ZSpace loopback compatibility enabled: trusts isolated client HTTP '
+                    '127.0.0.1 proxy origins with explicit ports; not an identity check')
     # Access logs omit query strings (which may contain project filenames).
     asyncio.run(serve(config, KnoweServer(), host=os.environ.get('KNOWE_WEB_HOST', '127.0.0.1'),
                       port=int(os.environ.get('KNOWE_WEB_PORT', '8090'))))
