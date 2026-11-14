@@ -175,8 +175,8 @@ def _merged_skillpacks(only_project: str | None) -> dict[str, Any]:
     system_by_id: dict[str, dict[str, Any]] = {}
     experiences: list[dict[str, Any]] = []
     third_party_by_id: dict[str, dict[str, Any]] = {}
-    for reg in _registrations():
-        if only_project and reg.project_id != only_project:
+    for reg in _skill_registrations():
+        if only_project and reg.project_id not in (only_project, "__skills__"):
             continue
         if reg.assets is None:
             continue
@@ -212,7 +212,7 @@ def _find_skillpack(pack_id: str) -> tuple[_ProjectReg, dict[str, Any]] | None:
     wanted = str(pack_id or "").strip()
     if not wanted:
         return None
-    for reg in _registrations():
+    for reg in _skill_registrations():
         if reg.assets is None:
             continue
         try:
@@ -225,6 +225,18 @@ def _find_skillpack(pack_id: str) -> tuple[_ProjectReg, dict[str, Any]] | None:
         if result.get("found"):
             return reg, result
     return None
+
+
+def _skill_registrations() -> list[_ProjectReg]:
+    # Global skills exist independently of whether any project engine is running.
+    from .config import CONFIG
+    from .knowledge_assets import KnowledgeAssetManager
+    from .knowledge_graph import KnowledgeGraphManager
+    root = Path(CONFIG.data_dir).expanduser()
+    graph = KnowledgeGraphManager(root)
+    global_reg = _ProjectReg("__skills__", graph, lambda: root / ".skill-catalog",
+                             assets=KnowledgeAssetManager(graph))
+    return _registrations() + [global_reg]
 
 
 def _dispatch_get_sync(parts: list[str], query: dict[str, list[str]]) -> KnowledgeHttpResponse:

@@ -329,7 +329,9 @@ export async function revealFileInFolder(
   if (isWebRuntime()) {
     const resolved = await resolvePreviewFile(projectId, file);
     const anchor = document.createElement('a');
-    anchor.href = previewUrl(projectId, resolved) + '&download=1';
+    anchor.href = projectId === '__library__'
+      ? `/api/web/library/download?id=${encodeURIComponent(resolved.path.split('/')[0]!)}`
+      : previewUrl(projectId, resolved) + '&download=1';
     anchor.download = resolved.name;
     anchor.click();
     return resolved;

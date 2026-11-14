@@ -837,6 +837,7 @@ _TURN_IDEMPOTENCY_VAR: contextvars.ContextVar["str | None"] = contextvars.Contex
 _TURN_ATTACHMENTS_VAR: contextvars.ContextVar["list[dict[str, Any]] | None"] = contextvars.ContextVar(
     "knowe_turn_attachments", default=None,
 )
+_TURN_SKILL_CONTEXT: contextvars.ContextVar[str] = contextvars.ContextVar("knowe_turn_skills", default="")
 # Actor-local visible execution identity.  Context is copied into stream/tool callback
 # tasks, so every emitted phase can inherit the exact actor/scope/channel without a
 # global "current Worker" slot.  Child Worker attempts replace this value at their
@@ -4476,6 +4477,8 @@ class ProjectEngine:
             structured_token = _STRUCTURED_NOTIFICATION_VAR.set(structured_notification)
             idempotency_token = _TURN_IDEMPOTENCY_VAR.set(turn_idempotency_key)
             attachments_token = _TURN_ATTACHMENTS_VAR.set(turn_attachments)
+            from .skill_tools import extract_selected_skill_context
+            skills_token = _TURN_SKILL_CONTEXT.set(extract_selected_skill_context(content))
 
             # [v1.0.13][R1] Automatic turns are not allowed to race an un-applied
             # model binding.  Wait before mutating history or emitting thinking state,
@@ -4570,6 +4573,7 @@ class ProjectEngine:
                 if idempotency_token is not None:
                     _TURN_IDEMPOTENCY_VAR.reset(idempotency_token)
                 _TURN_ATTACHMENTS_VAR.reset(attachments_token)
+                _TURN_SKILL_CONTEXT.reset(skills_token)
                 if structured_token is not None:
                     _STRUCTURED_NOTIFICATION_VAR.reset(structured_token)
                 if notification_token is not None:
@@ -6064,7 +6068,7 @@ class ProjectEngine:
         self.ensure_internal_layout()
         return self._assets.read_skillpack(
             self.project_id, self.internal_workspace, pack_id,
-            active_only=True,
+            active_only=True, workspace=Path(self.workspace_root),
         )
 
 
@@ -6571,7 +6575,9 @@ class ProjectEngine:
                 str(key): value for key, value in pack.items()
                 if not str(key).startswith("_")
             }
-            body = "\n\n".join(part for part in (_json_text(metadata), body_md) if part)
+            body = "\n\n".join(part for part in (
+                _json_text(metadata), str(loaded.get("instructions") or ""), body_md,
+            ) if part)
             return _block("Active Skillpack", clean_id, body)
 
         recent_skills: list[tuple[str, str, Mapping[str, Any]]] = []
@@ -6588,6 +6594,8 @@ class ProjectEngine:
                             if not isinstance(row, Mapping):
                                 continue
                             if str(row.get("status") or "").strip().casefold() != "active":
+                                continue
+                            if not row.get("automatic", True):
                                 continue
                             pack_id = _stable_id(row, "pack_id", "id")
                             if pack_id and pack_id not in packs_by_id:
@@ -8709,6 +8717,7 @@ class ProjectEngine:
             if not root.is_dir():
                 return None
             SKIP_DIRS = {
+                ".knowe-skills",
                 "node_modules", ".git", "__pycache__", "logs", "backups", "backup",
                 "dist", "build", "out", ".venv", "venv", "data", "runtime",
                 "agents", "handoffs", "knowledge", "memory", ".idea", ".vscode",
@@ -9075,6 +9084,9 @@ class ProjectEngine:
         written. The Coordinator text is queued unchanged; rejected proposals remain
         approval-only history.
         """
+        selected_skill_context = _TURN_SKILL_CONTEXT.get()
+        if selected_skill_context and selected_skill_context not in instruction:
+            instruction += "\n\n" + selected_skill_context
         # WAITING is occupied capacity.  Check it before changing phase or
         # writing any handoff files so a stale approval cannot leave a half-committed
         # instruction/approval pair with no Runtime task behind it.

@@ -1989,6 +1989,7 @@ class SQLiteCompletionStore:
         baseline_set = {str(p).strip().replace("\\", "/").casefold() for p in baseline if str(p).strip()}
 
         SKIP_DIRS = {
+            ".knowe-skills",  # Loaded skill resources are inputs, not deliverables.
             "node_modules", ".git", "__pycache__", "logs", "backups", "backup",
             "dist", "build", "out", ".venv", "venv", "data", "runtime",
             "agents", "handoffs", "knowledge", "memory", ".idea", ".vscode",

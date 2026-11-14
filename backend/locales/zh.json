@@ -1523,5 +1523,9 @@
   "roles.template.identity.tail": "  —— 这说的是**专业分工**，不是权限：你的工具箱和队里其他人**完全一样**。\n  真接到了不太对口的活，照做——先做完，然后在报告里补一句「这类活其实更适合 XX 角色」，让项目经理下次派对人。**绝不要因此罢工或推诿。**\n",
   "engine.status.failed_notice": "成员 {name} 的任务失败：{reason}",
   "engine.status.cancelled_notice": "成员 {name} 的任务已停止：{reason}",
-  "engine.status.unknown_reason": "原因未知"
+  "engine.status.unknown_reason": "原因未知",
+  "cap.skills.title": "使用技能",
+  "cap.skills.description": "发现、按需读取技能及其脚本模板；按用户要求安装技能",
+  "cap.mcp.title": "MCP 工具",
+  "cap.mcp.description": "发现并调用已连接服务的工具，按配置限制访问"
 }

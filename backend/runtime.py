@@ -49,6 +49,12 @@ WORKER_TOOL_NAMES: tuple[str, ...] = (
     "browser_scroll",
     "browser_back",
     "browser_screenshot",
+    "list_skillpacks",
+    "read_skillpack",
+    "prepare_skill_install",
+    "install_skillpack",
+    "list_mcp_tools",
+    "call_mcp_tool",
 )
 
 _MUTATION_TOOLS = frozenset(
@@ -823,7 +829,7 @@ class WorkerRuntime:
         names = tuple(map(str, self.registry.names()))
         if self.config.enforce_fixed_tools and names != tuple(self.config.expected_tool_names):
             raise ValueError(
-                "Worker registry must expose the fixed 19 tools in canonical order; "
+                "Worker registry must expose the canonical tools in order; "
                 f"got {names!r}"
             )
         schemas = tuple(copy.deepcopy(self.registry.get_schemas()))

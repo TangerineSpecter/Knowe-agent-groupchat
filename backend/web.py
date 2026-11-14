@@ -83,6 +83,8 @@ class WebConfig:
 def create_app(config: WebConfig, runtime=None, runtime_stopped: asyncio.Event | None = None) -> web.Application:
     config.workspace.mkdir(parents=True, exist_ok=True)
     state = WebState(config.data)
+    from .file_library import FileLibrary
+    library = FileLibrary(config.data)
     instance_id = hashlib.sha256(config.secret.encode()).hexdigest()[:16]
     # Include the password in the signing key, without storing it on disk.
     config = WebConfig(**{**config.__dict__, 'secret': hmac.new(
@@ -225,11 +227,28 @@ def create_app(config: WebConfig, runtime=None, runtime_stopped: asyncio.Event |
                     raise ValueError('每次最多上传 20 个文件')
             if not files:
                 raise ValueError('没有收到文件')
+            for item in files:
+                await asyncio.to_thread(library.register, Path(item['path']), origin='upload',
+                                        managed_root=config.workspace / 'uploads')
             return web.json_response({'files': files})
         except BaseException:
             import shutil
             await asyncio.to_thread(shutil.rmtree, directory, True)
             raise
+
+    async def discard_upload(request):
+        from .attachments import verify_path
+        from .config import CONFIG
+        payload = await object_body(request)
+        raw, sig = str(payload.get('path', '')), str(payload.get('sig', ''))
+        if not verify_path(raw, sig, CONFIG.attachment_key or config.runtime_token):
+            raise web.HTTPForbidden(text='附件凭据无效')
+        # Synchronize persisted message references before considering a file abandoned.
+        if runtime is not None:
+            from .library_api import sync
+            await asyncio.to_thread(sync, runtime)
+        removed = await asyncio.to_thread(library.discard_upload, Path(raw), config.workspace / 'uploads')
+        return web.json_response({'ok': True, 'removed': removed})
 
     async def attachment(request):
         from .attachments import verify_path
@@ -243,6 +262,13 @@ def create_app(config: WebConfig, runtime=None, runtime_stopped: asyncio.Event |
             raise web.HTTPNotFound(text='附件已不存在')
         response = web.FileResponse(target)
         response.headers['Content-Disposition'] = "attachment; filename*=UTF-8''" + quote(target.name, safe='')
+        return response
+
+    async def library_download(request):
+        target, _ = await asyncio.to_thread(library.resolve, request.query.get('id', ''))
+        response = web.FileResponse(target)
+        response.headers['Content-Disposition'] = "attachment; filename*=UTF-8''" + quote(target.name, safe='')
+        response.headers['X-Content-Type-Options'] = 'nosniff'
         return response
 
     async def proxy(request):
@@ -263,8 +289,12 @@ def create_app(config: WebConfig, runtime=None, runtime_stopped: asyncio.Event |
                 # Buffer bounded runtime responses. The runtime preview already caps files at 64 MiB.
                 body = await result.read()
                 if suffix == 'preview' and request.query.get('download') == '1':
-                    name = Path(request.query.get('path', 'file')).name
-                    forwarded['Content-Disposition'] = "attachment; filename*=UTF-8''" + quote(name, safe='')
+                    disposition = forwarded.get('Content-Disposition', '')
+                    if disposition.startswith('inline'):
+                        forwarded['Content-Disposition'] = 'attachment' + disposition[len('inline'):]
+                    elif not disposition:
+                        name = Path(request.query.get('path', 'file')).name
+                        forwarded['Content-Disposition'] = "attachment; filename*=UTF-8''" + quote(name, safe='')
                 return web.Response(body=body, status=result.status, headers=forwarded)
         except (ClientError, OSError, asyncio.TimeoutError):
             raise web.HTTPServiceUnavailable(text='后端暂时不可用，请稍后重试')
@@ -398,7 +428,9 @@ def create_app(config: WebConfig, runtime=None, runtime_stopped: asyncio.Event |
     app.router.add_get('/api/web/notifications', notifications)
     app.router.add_post('/api/web/notifications/read', read_notifications)
     app.router.add_post('/api/web/uploads', upload)
+    app.router.add_post('/api/web/uploads/discard', discard_upload)
     app.router.add_get('/api/web/attachments', attachment)
+    app.router.add_get('/api/web/library/download', library_download)
     app.router.add_get('/api/runtime/ws', websocket)
     app.router.add_route('*', '/api/runtime/{path:.*}', proxy)
     app.router.add_get('/{path:.*}', static)

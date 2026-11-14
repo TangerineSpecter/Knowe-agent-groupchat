@@ -1093,6 +1093,7 @@ export const UserMessageCmdSchema = z.object({
   content: z.string(),
   client_msg_id: z.string(),         // [v2#9] 必填
   attachments: z.array(AttachmentInputSchema).optional(),  // [v1.0.19.4]
+  skills: z.array(z.string()).max(8).optional(),
   // [v1.0.23.1] 转发结构化载荷（content = 用户配言原文；LLM 模板由后端构造）。
   forwarded: ForwardedPayloadSchema.optional(),
 });

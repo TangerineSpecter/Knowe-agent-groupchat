@@ -118,6 +118,7 @@ import DevDrawer from '../components/DevDrawer';
 import ContactsView from '../components/ContactsView';
 import FavoritesView from '../components/FavoritesView';
 import KnowledgeView from '../components/KnowledgeView';
+import LibraryView from '../components/LibraryView';
 import SettingsView from '../components/SettingsView';
 import CommandPalette, { type GlobalSearchTarget } from '../components/GlobalSearch';
 import { useKnowledgeStore } from '../store/knowledge';
@@ -669,6 +670,8 @@ export const App: React.FC = () => {
                     searchFocus={favoritesSearchFocus}
                     onSearchFocusDone={clearSearchFocus}
                   />
+                ) : activeView === 'library' ? (
+                  <LibraryView onOpenReference={(projectId, seq) => navigateFromSearch({ kind: 'message', projectId, itemKey: `s${seq}` })} />
                 ) : activeView === 'knowledge' ? (
                   <KnowledgeView />
                 ) : activeView === 'settings' ? (

@@ -53,6 +53,8 @@ import {
   IconBook, IconAlert, IconSpark, IconCheckbox, IconFolder,
   IconEdit, IconReport, IconRecover, IconTrash, IconChevR,
 } from './icons';
+import { McpPanel } from './McpPanel';
+import { SkillInstall } from './SkillInstall';
 import { KnowledgePreview } from './KnowledgePreview';
 import './knowledge-view.css';
 
@@ -97,17 +99,6 @@ const IcPuzzle: React.FC = () => (
 /** 插头（16px）——技能插座 MCP */
 const IcPlug: React.FC = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-    strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 22v-5" />
-    <path d="M9 8V2" />
-    <path d="M15 8V2" />
-    <path d="M18 8v3a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z" />
-  </svg>
-);
-
-/** 插头大图标（52px）——技能插座空态（同 BookBig 先例） */
-const PlugBig: React.FC = () => (
-  <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor"
     strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 22v-5" />
     <path d="M9 8V2" />
@@ -172,6 +163,7 @@ export const KnowledgeView: React.FC = () => {
   const loading = useKnowledgeStore((s) => s.loading);
   const loadedAt = useKnowledgeStore((s) => s.loadedAt);
   const error = useKnowledgeStore((s) => s.error);
+  const [showSkillInstall, setShowSkillInstall] = useState(false);
   const skillpacks = useKnowledgeStore((s) => s.skillpacks);
   const profileProjects = useKnowledgeStore((s) => s.profileProjects);
   // 订阅 convs：来源行「项目名 · Agent 名」要跟着花名册/项目事件实时对。
@@ -506,7 +498,7 @@ export const KnowledgeView: React.FC = () => {
   return (
     <>
       {/* ═══ 左侧导航（SidePanel）═══ */}
-      <aside className="side">
+      <aside className="side kn-sidebar">
         <div className="side-head"><div className="side-title">{t('knowledge.view.06')}</div></div>
 
         <div className="search-wrap">
@@ -608,7 +600,7 @@ export const KnowledgeView: React.FC = () => {
           >
             <span className="navrow-ic"><IcPuzzle /></span>
             <span className="navrow-nm">{t('knowledge.view.skillsLabel')}</span>
-            <span className="kn-badge">{t('knowledge.view.skillsWIP')}</span>
+
           </div>
 
           {expandSkills && (
@@ -690,7 +682,7 @@ export const KnowledgeView: React.FC = () => {
           >
             <span className="navrow-ic"><IcPlug /></span>
             <span className="navrow-nm">{t('knowledge.view.mcpLabel')}</span>
-            <span className="kn-badge">{t('knowledge.view.skillsWIP')}</span>
+
           </div>
 
           {expandMcp && (
@@ -722,7 +714,7 @@ export const KnowledgeView: React.FC = () => {
         {/* 底部计数：按面板换口径 */}
         <div>
           <div style={{ padding: '8px 20px', fontSize: 11, color: 'var(--ink-3)' }}>
-            {pane === 'skills'
+            {pane === 'skills' && skillPane.startsWith('mcp') ? t('mcp.footer') : pane === 'skills'
               ? <>
                 {t('knowledge.view.72')} {skillpacks.systemBuiltin.length} · {t('knowledge.view.90')} {skillpacks.projectExperience.length}
                 {' '}· {t('knowledge.view.69')} {skillpacks.thirdParty.length}
@@ -735,6 +727,35 @@ export const KnowledgeView: React.FC = () => {
       {/* ═══ 右侧内容区（Stage；kn-stage 给预览面板一个定位锚）═══ */}
       <div className="stage kn-stage">
         <div className="stage-card">
+          <div className="kn-mobile-controls">
+            <label htmlFor="kn-mobile-category">{t('extensions.browseCategory')}</label>
+            <select id="kn-mobile-category" value={pane === 'skills' ? skillPane : `graph:${scope || ''}:${cat || ''}`}
+              onChange={event => {
+                const value = event.target.value;
+                if (value.startsWith('graph:')) {
+                  const [, nextScope, nextCat] = value.split(':');
+                  setPane('graph'); setScope((nextScope || null) as KnowScope | null); setCat((nextCat || null) as KnowCat | null);
+                } else { setPane('skills'); setSkillPane(value as SkillPane); }
+              }}>
+              <option value="graph::">{t('knowledge.view.67')}</option>
+              {SCOPES.map(item => <optgroup key={item.id} label={t(item.label)}>
+                <option value={`graph:${item.id}:`}>{t(item.label)} · {t('common.15')}</option>
+                {CATS.map(category => <option key={category.id} value={`graph:${item.id}:${category.id}`}>{t(item.label)} · {category.id}</option>)}
+              </optgroup>)}
+              <optgroup label={t('knowledge.view.skillsLabel')}>
+                {(['root', 'system', 'builtin', 'experience', 'third'] as SkillPane[]).map(key => <option key={key} value={key}>{skillTitle[key]}</option>)}
+              </optgroup>
+              <optgroup label={t('knowledge.view.mcpLabel')}>
+                {(['mcpRoot', 'mcpSystem', 'mcpThird'] as SkillPane[]).map(key => <option key={key} value={key}>{skillTitle[key]}</option>)}
+              </optgroup>
+            </select>
+            <div className="kn-mobile-filter">
+              <input type="search" aria-label={t('extensions.searchEntries')} placeholder={t('extensions.searchEntries')} value={q} onChange={event => setQ(event.target.value)} />
+              {!(pane === 'skills' && skillPane.startsWith('mcp')) && <select aria-label={t('extensions.filterStatus')} value={seg || ''} onChange={event => setSeg((event.target.value || null) as KnowSt | null)}>
+                {SEGS.map(item => <option key={item.label} value={item.st || ''}>{t(item.label)}</option>)}
+              </select>}
+            </div>
+          </div>
           <div className="stage-head kn-head">
             <div>
               <div className="stage-h1">{headTitle}</div>
@@ -769,11 +790,10 @@ export const KnowledgeView: React.FC = () => {
               <div className="kn-head-side">
                 <button
                   type="button"
-                  className="kn-install-placeholder"
-                  disabled
-                  title={t('knowledge.view.70')}
+                  className="kn-btn ok"
+                  onClick={() => setShowSkillInstall(value => !value)}
                 >
-                  {t('knowledge.view.installComing')}
+                  {t('extensions.installSkills')}
                 </button>
               </div>
             )}
@@ -809,18 +829,13 @@ export const KnowledgeView: React.FC = () => {
           )}
 
           <div className="stage-scroll" style={{ paddingTop: 4 }}>
+            {pane === 'skills' && skillPane === 'third' && showSkillInstall && <SkillInstall
+              onClose={() => setShowSkillInstall(false)}
+              onInstalled={() => { setShowSkillInstall(false); void useKnowledgeStore.getState().loadSkillpacks(); toast(t('extensions.installSuccess')); }}
+            />}
             {pane === 'skills' ? (
               skillPane === 'mcpRoot' || skillPane === 'mcpSystem' || skillPane === 'mcpThird' ? (
-                <div className="empty2">
-                  <div className="e-ic"><PlugBig /></div>
-                  <p>
-                    {skillPane === 'mcpRoot'
-                      ? t('knowledge.view.mcpRootEmpty')
-                      : skillPane === 'mcpSystem'
-                        ? t('knowledge.view.mcpSystemEmpty')
-                        : t('knowledge.view.mcpThirdEmpty')}
-                  </p>
-                </div>
+                <McpPanel scope={skillPane === 'mcpSystem' ? 'system' : skillPane === 'mcpThird' ? 'third_party' : 'all'} query={q} />
               ) : shownPacks.length === 0 ? (
                 <div className="empty2">
                   <div className="e-ic"><IcPuzzle /></div>

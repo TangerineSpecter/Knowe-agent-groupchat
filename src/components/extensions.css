@@ -1,0 +1,64 @@
+.extension-install { margin: 0 0 var(--space-5); padding: var(--space-5); background: var(--surface-sunken); border-radius: var(--r-md); color: var(--ink); }
+.extension-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.extension-heading h3 { font-size: 17px; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.extension-install p { margin: 12px 0; line-height: 1.6; color: var(--ink-2); max-width: 72ch; }
+.extension-source { margin: 20px 0; }
+.extension-source label { display: block; font-size: 13px; margin-bottom: 8px; }
+.extension-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.extension-actions input { flex: 1; min-width: 180px; min-height: 36px; padding: 7px 12px; border: 1px solid var(--hairline); border-radius: var(--r-sm); background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; }
+.extension-install :is(input, button, summary):focus-visible, .mcp-panel :is(input, textarea, select, button, summary):focus-visible, .skill-selections button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: none; }
+.skill-picker button:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+.extension-install button:disabled, .mcp-panel button:disabled { opacity: .55; cursor: not-allowed; }
+.extension-install .kn-btn, .mcp-panel .kn-btn { min-height: 36px; height: auto; padding: 6px 14px; line-height: 20px; }
+.kn-btn.danger { background: var(--danger); color: var(--surface); }
+.kn-btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 88%, var(--ink)); color: var(--surface); }
+.extension-install .extension-error, .skill-picker .extension-error { color: var(--danger); overflow-wrap: anywhere; }
+.extension-candidates { margin: 20px 0; }
+.extension-candidates h4 { margin: 0 0 12px; }
+.extension-candidate { display: flex; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--hairline); cursor: pointer; }
+.extension-candidate input { flex: 0 0 auto; align-self: flex-start; margin-top: 4px; accent-color: var(--accent); }
+.extension-candidate > span { min-width: 0; }
+.extension-candidate strong { margin-right: 10px; }
+.extension-description { display: block; margin-top: 5px; color: var(--ink-2); line-height: 1.5; }
+.extension-candidate small { display: block; margin-top: 5px; color: var(--ink-2); overflow-wrap: anywhere; }
+.extension-replace { display: flex; gap: 8px; margin: 16px 0; }
+.extension-candidates > button { margin-top: 16px; }
+.extension-install details { margin-top: 16px; }
+.extension-install summary { cursor: pointer; font-size: 13px; }
+.extension-install code { display: block; margin-top: 6px; overflow-wrap: anywhere; font-size: 12px; }
+.skill-picker { position: absolute; z-index: 30; bottom: calc(100% + 6px); left: var(--space-6); right: var(--space-6); max-width: 560px; max-height: 320px; overflow: auto; background: var(--surface); border: 1px solid var(--hairline); box-shadow: var(--shadow-3); border-radius: var(--r-md); padding: 8px; }
+.skill-picker > p { padding: 8px; margin: 0; font-size: 13px; color: var(--ink-2); }
+.skill-picker button { display: block; width: 100%; text-align: left; border-radius: var(--r-sm); padding: 10px 12px; color: var(--ink); }
+.skill-picker button:hover, .skill-picker button[aria-selected="true"] { background: var(--accent-tint); }
+.skill-picker button span { display: block; font-size: 12px; color: var(--ink-2); margin-top: 4px; line-height: 1.5; }
+.skill-selections { display: flex; flex-wrap: wrap; flex-shrink: 0; gap: 8px; padding: 0; margin-bottom: var(--space-2); }
+.skill-selections button { padding: 5px 10px; border-radius: var(--r-sm); background: var(--accent-tint); color: var(--ink); font-size: 12px; display: flex; align-items: center; gap: 8px; }
+@media (max-width: 640px) { .extension-install { margin: 0 0 16px; padding: 16px; } .extension-actions input { flex-basis: 100%; } }
+.mcp-panel { padding: 0 0 var(--space-8); color: var(--ink); }
+.mcp-panel p { line-height: 1.6; color: var(--ink-2); font-size: 13px; margin: 10px 0; max-width: 72ch; }
+.mcp-panel > .extension-heading { flex-wrap: wrap; padding-bottom: 20px; }
+.mcp-panel .extension-error { color: var(--danger); overflow-wrap: anywhere; }
+.mcp-form { padding: 20px; margin-bottom: 24px; border-radius: var(--r-md); background: var(--surface-sunken); max-width: 780px; }
+.mcp-form h3 { margin: 0 0 20px; font-size: 17px; }
+.mcp-form label { display: flex; flex-direction: column; gap: 8px; font-size: 13px; margin-bottom: 16px; }
+.mcp-form input, .mcp-form textarea, .mcp-form select { width: 100%; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--r-sm); background: var(--surface); color: var(--ink); font: inherit; }
+.mcp-form textarea { min-height: 70px; resize: vertical; font-family: var(--font-mono); line-height: 1.6; }
+.mcp-empty { padding: 48px 0; }
+.mcp-empty h3 { font-size: 17px; }
+.mcp-row { padding: 24px 0; border-top: 1px solid var(--hairline); }
+.mcp-row .extension-heading { align-items: flex-start; margin-bottom: 12px; }
+.mcp-row .extension-heading > div:first-child { min-width: 0; flex: 1; }
+.mcp-row h3 { font-size: 16px; }
+.mcp-address { margin: 4px 0 0; overflow-wrap: anywhere; }
+.mcp-tools { margin-top: 20px; }
+.mcp-tools h4 { font-size: 13px; margin-bottom: 12px; }
+.mcp-tools details { padding: 10px 0; border-top: 1px solid var(--hairline); }
+.mcp-tools summary { cursor: pointer; font-size: 13px; }
+.mcp-tools pre { padding: 12px; font: 12px/1.6 var(--font-mono); overflow: auto; max-height: 260px; background: var(--surface-sunken); border-radius: var(--r-sm); }
+.mcp-delete { margin-top: 16px; }
+@media (max-width: 640px) { .mcp-panel { padding: 0 0 24px; } .mcp-row .extension-heading { align-items: flex-start; } .mcp-form { padding: 16px; } }
+
+.mcp-permission { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.6; }
+.mcp-permission input { flex: 0 0 auto; margin-top: 4px; accent-color: var(--accent); }
+.mcp-tool-row { padding: 14px 0; border-top: 1px solid var(--hairline); }
+.mcp-tool-row details { border: 0; padding: 8px 0 0 26px; }

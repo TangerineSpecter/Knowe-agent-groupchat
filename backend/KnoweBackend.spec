@@ -67,6 +67,7 @@ a = Analysis(
         ("souls", "backend/souls"),
         ("prompts", "backend/prompts"),
         ("locales", "backend/locales"),
+        ("skills", "backend/skills"),
     ],
     hiddenimports=[
         "playwright",

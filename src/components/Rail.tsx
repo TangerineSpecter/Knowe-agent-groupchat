@@ -18,7 +18,7 @@ import { useSettingsStore } from '../store/settings';
 import {
   IconChats, IconContacts, IconFavorites,
   IconKnowledge, IconSearchSm, IconSettings,
-  IconMoon, IconSun,
+  IconMoon, IconSun, IconFolder,
 } from './icons';
 import { useTranslation } from 'react-i18next';
 
@@ -40,6 +40,7 @@ export const Rail: React.FC = () => {
     { view: 'chats', label: t('common.14'), icon: <IconChats /> },
     { view: 'contacts', label: t('contacts.view.29'), icon: <IconContacts /> },
     { view: 'favorites', label: t('common.09'), icon: <IconFavorites /> },
+    { view: 'library', label: t('library.title'), icon: <IconFolder /> },
     { view: 'knowledge', label: t('knowledge.view.06'), icon: <IconKnowledge /> },
   ];
 

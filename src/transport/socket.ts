@@ -144,7 +144,7 @@ export interface SocketAPI {
   disconnect: () => void;
   sendMessage: (
     content: string, projectId: string, clientMsgId?: string, attachments?: unknown[],
-    forwarded?: ForwardedPayload,
+    forwarded?: ForwardedPayload, skills?: string[],
   ) => string;
   approve: (approvalId: string, projectId: string) => void;
   reject: (approvalId: string, projectId: string) => void;
@@ -871,7 +871,7 @@ export function createSocket({ url = runtimeWsUrl(), callbacks }: SocketConfig):
 
     sendMessage(
       content: string, projectId: string, clientMsgId?: string, attachments?: unknown[],
-      forwarded?: ForwardedPayload,
+      forwarded?: ForwardedPayload, skills?: string[],
     ): string {
       const cmid = clientMsgId || generateCmid();
       const pid = projectId || DEFAULT_PROJECT;
@@ -890,6 +890,7 @@ export function createSocket({ url = runtimeWsUrl(), callbacks }: SocketConfig):
       };
       if (attachments && attachments.length) frame.attachments = attachments;
       if (forwarded) frame.forwarded = forwarded;
+      if (skills?.length) frame.skills = skills;
       sendRaw(frame as OutboundCommand);
 
       return cmid;

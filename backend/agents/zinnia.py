@@ -120,6 +120,7 @@ CONTEXT_TEMPLATE = """\
 ────────────────────────────────────────────────────────────"""
 
 def _build_tools() -> list[dict[str, Any]]:
+    from ..skill_tools import platform_skill_registry
     return [
         {
             "type": "function",
@@ -344,7 +345,7 @@ def _build_tools() -> list[dict[str, Any]]:
                 },
             },
         },
-    ]
+    ] + platform_skill_registry().get_schemas(only={"list_skillpacks", "prepare_skill_install", "install_skillpack"})
 
 # ``delta.content`` 不再在这里做关键词擦除。工具回合统一交给
 # knowe_core.StreamAssembler 的完整回合协议闸门；知知的公开回答则只能从
@@ -976,6 +977,15 @@ class ZinniaAgent:
         del emit
         name = (call.get("function") or {}).get("name", "")
         raw = (call.get("function") or {}).get("arguments") or "{}"
+        if name in {"list_skillpacks", "prepare_skill_install", "install_skillpack"}:
+            from ..skill_tools import platform_skill_registry
+            try:
+                arguments = json.loads(raw)
+                if not isinstance(arguments, dict):
+                    raise ValueError("arguments must be an object")
+                return await platform_skill_registry().execute(name, arguments)
+            except (ValueError, TypeError) as exc:
+                return json.dumps({"ok": False, "error": str(exc)})
 
         # [v0.11 C-1] read_harness_memory：只读，不弹卡，直接把公告栏全文回给模型。
         if name == "read_harness_memory":

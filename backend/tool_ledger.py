@@ -23,6 +23,12 @@ Handler = Callable[..., Any]
 TOOL_ACTIVITY_SEPARATOR = "\u241f"
 
 _TOOL_STAGE: dict[str, str] = {
+    "list_skillpacks": "explore",
+    "read_skillpack": "integrate",
+    "prepare_skill_install": "explore",
+    "install_skillpack": "implement",
+    "list_mcp_tools": "explore",
+    "call_mcp_tool": "implement",
     # Worker fixed 19 tools.
     "safe_list_dir": "explore",
     "safe_search_files": "explore",

@@ -64,6 +64,12 @@ const STAGE_COMPLETE_PHRASES: Record<WorkStage, string> = {
 
 /** 全名 → 技术详情里的人话。这里允许显示参数摘要，但不用于主状态行。 */
 const TOOL_PHRASES: Record<string, string> = {
+  list_skillpacks: 'tool.extensions.listSkills',
+  read_skillpack: 'tool.extensions.readSkill',
+  prepare_skill_install: 'tool.extensions.prepareSkill',
+  install_skillpack: 'tool.extensions.installSkill',
+  list_mcp_tools: 'tool.extensions.listMcp',
+  call_mcp_tool: 'tool.extensions.callMcp',
   safe_read_file: 'tool.phrase.63',
   safe_write_file: 'tool.phrase.04',
   safe_patch: 'tool.phrase.02',
@@ -106,6 +112,12 @@ const TOOL_PHRASES: Record<string, string> = {
 };
 
 const TOOL_STAGE: Record<string, WorkStage> = {
+  list_skillpacks: 'explore',
+  read_skillpack: 'integrate',
+  prepare_skill_install: 'explore',
+  install_skillpack: 'implement',
+  list_mcp_tools: 'explore',
+  call_mcp_tool: 'implement',
   safe_list_dir: 'explore',
   safe_search_files: 'explore',
   list_external_dir: 'explore',

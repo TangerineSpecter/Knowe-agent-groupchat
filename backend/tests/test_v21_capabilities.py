@@ -31,13 +31,13 @@ def test_registry_and_projection_share_exact_fixed_order() -> None:
     registry = tools_knowe.build_worker_registry(FakeEngine(), "fe_1")
     assert tuple(registry.names()) == WORKER_TOOL_NAMES
     assert worker_tool_names() == WORKER_TOOL_NAMES
-    assert len(WORKER_TOOL_NAMES) == 19
+    assert len(WORKER_TOOL_NAMES) == 25
 
 
 def test_every_fixed_tool_is_grouped_once() -> None:
     grouped = [name for capability in CAPABILITIES for name in capability.tools]
     assert tuple(grouped) == WORKER_TOOL_NAMES
-    assert len(set(grouped)) == 19
+    assert len(set(grouped)) == 25
 
 
 def test_service_flags_never_hide_tools_or_capabilities(monkeypatch) -> None:

@@ -60,6 +60,8 @@ import {
   DEFAULT_ROLE_TYPES,
 } from './state';
 import i18n from '../i18n';
+import { isWebRuntime } from '../shared/deployment';
+import { webRequest } from '../web/api';
 
 const _transientFrameFallbacks = new Set<string>();
 
@@ -670,6 +672,7 @@ export interface KnoweStore {
       files?: ProducedFile[];
       /** [v1.0.19.4] 用户附件（路径+签名，无字节）——随消息出站，并挂到用户气泡上。 */
       attachments?: AttachmentInput[];
+      skills?: string[];
     },
   ) => string;
   approve: (approvalId: string, projectId: string) => void;
@@ -1758,6 +1761,7 @@ export const useKnoweStore = create<KnoweStore>()(
         displayText?: string; quote?: MessageQuote;
         forwarded?: ForwardMeta; files?: ProducedFile[];
         attachments?: AttachmentInput[];
+      skills?: string[];
       },
     ): string {
       const { _socket, activeProjectId } = get();
@@ -1766,7 +1770,7 @@ export const useKnoweStore = create<KnoweStore>()(
         console.warn('[store] sendMessage: no socket');
         return '';
       }
-      const cmid = _socket.sendMessage(content, pid, clientMsgId, opts?.attachments, opts?.forwarded);
+      const cmid = _socket.sendMessage(content, pid, clientMsgId, opts?.attachments, opts?.forwarded, opts?.skills);
 
       // ★ 乐观渲染：立即插入 pending 气泡
       if (cmid) {
@@ -1927,6 +1931,14 @@ export const useKnoweStore = create<KnoweStore>()(
 
     removeAttachment(projectId: string, path: string): void {
       if (!projectId) return;
+      const attachment = get()._attachments[projectId]?.find(item => item.path === path);
+      const usedElsewhere = Object.entries(get()._attachments).some(([pid, items]) => pid !== projectId && items.some(item => item.path === path));
+      if (isWebRuntime() && attachment && !usedElsewhere) {
+        void webRequest('uploads/discard', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path, sig: attachment.sig }),
+        }).catch(() => { /* Abandoned uploads remain visible in the file library for cleanup. */ });
+      }
       set((draft) => {
         const cur = draft._attachments[projectId];
         if (!cur) return;

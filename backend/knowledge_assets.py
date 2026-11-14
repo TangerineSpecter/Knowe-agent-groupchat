@@ -1572,7 +1572,7 @@ class KnowledgeAssetManager:
 
     def read_skillpack(
         self, project_id: str, internal_workspace: Path | str, pack_id: str,
-        *, active_only: bool = False,
+        *, active_only: bool = False, workspace: Path | None = None,
     ) -> dict[str, Any]:
         """读取 SKILL.md。`active_only=True` 是 Agent 的硬门；UI 详情可看待审/退役。"""
         wanted = str(pack_id or "").strip()
@@ -1581,7 +1581,7 @@ class KnowledgeAssetManager:
         try:
             for row, md in self._system_skill_documents():
                 if row.get("pack_id") == wanted:
-                    return _read_skill_result(row, md, active_only=active_only)
+                    return _read_skill_result(row, md, active_only=active_only, workspace=workspace)
 
             base = self.project_skill_dir(internal_workspace)
             lock = _project_skill_lock(base)
@@ -1592,11 +1592,11 @@ class KnowledgeAssetManager:
                     row = self._public_skill_row(state)
                     rel = str(state.get("relative_path") or state.get("asset_id") or "")
                     md = _safe_child(base, rel) / _SKILL_MD
-                    return _read_skill_result(row, md, active_only=active_only)
+                    return _read_skill_result(row, md, active_only=active_only, workspace=workspace)
 
             for row, md in self._third_party_skill_documents():
                 if row.get("pack_id") == wanted:
-                    return _read_skill_result(row, md, active_only=active_only)
+                    return _read_skill_result(row, md, active_only=active_only, workspace=workspace)
         except Exception:
             log.exception(msg("knowledge_assets.py.051"), project_id, wanted)
         return {"found": False, "pack_id": wanted, "reason": "skillpack_not_found"}
@@ -1754,7 +1754,7 @@ class KnowledgeAssetManager:
             active: list[dict[str, Any]] = []
             for key in ("system_builtin", "project_experience", "third_party"):
                 for row in packs.get(key) or []:
-                    if isinstance(row, dict) and row.get("status") == "active":
+                    if isinstance(row, dict) and row.get("status") == "active" and row.get("automatic", True):
                         active.append(row)
             if not active:
                 return ""
@@ -1798,6 +1798,8 @@ class KnowledgeAssetManager:
             "status": status,
             "view_state": "ok" if status == "active" else status,
             "immutable": kind == "system_builtin" or bool(row.get("immutable")),
+            "automatic": row.get("automatic", True),
+            "user_invocable": row.get("user_invocable", True),
             "created_at": row.get("created_at"),
             "updated_at": row.get("updated_at"),
         }
@@ -2057,6 +2059,19 @@ def _discover_skill_files(root: Path, *, limit: int = 500) -> list[Path]:
 
 
 def _front_clean(text: str, key: str) -> str:
+    # Standard skills support YAML block scalars; retain legacy documents as a fallback.
+    import yaml
+    header = re.match(r"\A---\s*\n(.*?)\n---(?:\s*\n|$)", text, re.S)
+    if header and len(header[1]) <= 16_384:
+        try:
+            parsed = yaml.safe_load(header[1])
+            if isinstance(parsed, dict) and key in parsed:
+                value = parsed[key]
+                if isinstance(value, bool):
+                    return "true" if value else "false"
+                return str(value or "").strip()
+        except yaml.YAMLError:
+            pass
     value = _front_value(text, key).strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
         value = value[1:-1].strip()
@@ -2102,6 +2117,8 @@ def _skill_row_from_document(
         "asset_id": "",
         "source": "knowe_bundle" if kind == "system_builtin" else "user_install",
         "immutable": immutable,
+        "automatic": _front_clean(text, "disable-model-invocation") != "true",
+        "user_invocable": _front_clean(text, "user-invocable") != "false",
         "created_at": stamp,
         "updated_at": stamp,
     }
@@ -2149,7 +2166,7 @@ def _mtime_iso(path: Path) -> str:
 
 
 def _read_skill_result(
-    row: dict[str, Any], md: Path, *, active_only: bool,
+    row: dict[str, Any], md: Path, *, active_only: bool, workspace: Path | None = None,
 ) -> dict[str, Any]:
     status = str(row.get("status") or "pending")
     if active_only and status != "active":
@@ -2167,7 +2184,17 @@ def _read_skill_result(
             "found": False, "pack_id": row.get("pack_id"),
             "reason": "skillpack_body_missing",
         }
-    return {"found": True, "pack": row, "body_md": text}
+    result = {"found": True, "pack": row, "body_md": text}
+    if workspace is not None:
+        from .skill_installer import materialize
+        resource_dir = materialize(md.parent, workspace, str(row["pack_id"]))
+        result["resource_directory"] = resource_dir
+        result["instructions"] = (
+            "Follow this skill for the task. Resolve relative scripts, references and assets under "
+            f"{resource_dir}/. Installing or reading a skill does not execute its scripts or install dependencies. "
+            "Use the project file and terminal tools as needed; report missing dependencies accurately."
+        )
+    return result
 
 
 def _rewrite_skill_status(path: Path, status: str) -> None:

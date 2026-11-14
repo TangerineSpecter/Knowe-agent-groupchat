@@ -45,7 +45,7 @@ def test_registry_is_exact_fixed_19_in_canonical_order(tmp_path: Path) -> None:
     registry = tools_knowe.build_worker_registry(engine, "worker-1")
 
     assert tuple(registry.names()) == WORKER_TOOL_NAMES
-    assert len(registry.get_schemas()) == 19
+    assert len(registry.get_schemas()) == 25
     assert tuple(
         item["function"]["name"] for item in registry.get_schemas()
     ) == WORKER_TOOL_NAMES

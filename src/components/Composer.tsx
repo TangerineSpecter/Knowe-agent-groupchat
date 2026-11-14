@@ -1,3 +1,5 @@
+import { useSkillPicker } from './useSkillPicker';
+import type { CallableSkill } from '../store/extensions';
 /**
  * Composer.tsx — 输入区（component-tree §D · Composer）
  *
@@ -328,11 +330,14 @@ export const Composer: React.FC = () => {
   const insertMentionRef = useRef(insertMention);
   insertMentionRef.current = insertMention;
 
+  const skillsRef = useRef<{ selected: CallableSkill[]; clear: () => void; keyDown: (event: KeyboardEvent) => boolean }>({ selected: [], clear: () => {}, keyDown: () => false });
   const doSend = useCallback(() => {
     const ed = editorRef.current;
     if (!ed || !projectId) return;
     // [v1.0.37.3] 发送取编辑器真源（draft 是影子，可能滞后一帧）。
-    const t = tiptapDocToMarkdown(ed.getJSON()).trim();
+    const selectedSkills = skillsRef.current.selected;
+    const skills = selectedSkills.map(row => row.pack_id);
+    const t = [selectedSkills.map(row => `/${row.name}`).join(' '), tiptapDocToMarkdown(ed.getJSON()).trim()].filter(Boolean).join('\n');
     // [v1.0.19.4] 只要有文字**或**有附件就能发；纯附件（无文字）也允许。
     if ((!t && attachments.length === 0)) return;
     setMentionOpen(false);
@@ -346,6 +351,7 @@ export const Composer: React.FC = () => {
       const structured = i18n.t('composer.quoteStructure', { name: quote.name, text: quote.text, verb: i18n.t('composer.17'), t });
       sendMessage(structured, projectId, undefined, {
         displayText: t,
+        skills,
         quote: {
           name: quote.name,
           text: quote.text.length > 80 ? `${quote.text.slice(0, 80)}…` : quote.text,
@@ -357,8 +363,9 @@ export const Composer: React.FC = () => {
     } else {
       // 出站 + 乐观气泡（store 一手包办）；[v1.0.19.4] 带上本会话的附件。
       sendMessage(t, projectId, undefined,
-        attachments.length ? { attachments: attachments as never } : undefined);
+        { skills, ...(attachments.length ? { attachments: attachments as never } : {}) });
     }
+    skillsRef.current.clear();
     ed.commands.clearContent();          // 触发 onUpdate → setDraft('') + hasText=false
     clearDraft(projectId);               // [v0.7 #1] 发出去了，草稿就没了
     if (attachments.length) clearAttachments(projectId);   // [v1.0.19.4] 附件发出即清
@@ -370,6 +377,7 @@ export const Composer: React.FC = () => {
   // 弹层键盘导航 + 发送快捷键（handleKeyDown 是创建时闭包，全部读 ref）。
   const handleKeyDownRef = useRef<(_view: unknown, event: KeyboardEvent) => boolean>(() => false);
   handleKeyDownRef.current = (_view, event) => {
+    if (skillsRef.current.keyDown(event)) return true;
     if (mentionOpenRef.current) {
       const count = filteredMentionMembersRef.current.length;
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -449,6 +457,8 @@ export const Composer: React.FC = () => {
   }, [editor, conn, t]);
 
   editorRef.current = editor;
+  const skillPicker = useSkillPicker(editor, projectId);
+  skillsRef.current = skillPicker;
 
   // 换会话 → 编辑器换成另一段草稿（markdown 反序列化恢复）；mention 弹层收起。
   useEffect(() => {
@@ -523,7 +533,7 @@ export const Composer: React.FC = () => {
     ed.chain().focus().insertContent('@').run();
   }, [canMention, mentionMembers.length, mentionOpen]);
 
-  const idle = !hasText && attachments.length === 0;
+  const idle = !hasText && attachments.length === 0 && skillPicker.selected.length === 0;
 
   /*
    * [v0.5 #11/#15] 展开：写长东西时，一行半的输入框根本不够用。
@@ -757,6 +767,7 @@ export const Composer: React.FC = () => {
         }}
       />
 
+      {skillPicker.ui}
       {/* [v0.40.0] 引用条（右键「引用」）。 */}
       <div id="quoteHolder">
         {quote && (

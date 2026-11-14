@@ -1595,5 +1595,9 @@
   "roles.profiles.legal.not_for": "Writing code, deployment",
   "engine.status.failed_notice": "Member {name}'s task failed: {reason}",
   "engine.status.cancelled_notice": "Member {name}'s task was stopped: {reason}",
-  "engine.status.unknown_reason": "reason unknown"
+  "engine.status.unknown_reason": "reason unknown",
+  "cap.skills.title": "Use skills",
+  "cap.skills.description": "Discover and load skills, scripts and templates; install skills when requested",
+  "cap.mcp.title": "MCP tools",
+  "cap.mcp.description": "Discover and call connected service tools within configured access"
 }

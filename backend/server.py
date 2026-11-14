@@ -290,6 +290,8 @@ from .engine import (
 from .hub import Client, Hub
 from .knowledge_graph import KnowledgeGraphManager
 from .knowledge_api import dispatch_knowledge_http
+from .extensions_api import dispatch_extensions_http
+from .library_api import dispatch_library_http, library_for, record_event as record_library_event
 from .memory_manager import MemoryManager
 from .persist import Store, legacy_display_name
 from .migrations import run_data_migrations   # [任务 1.6] 启动时数据版本检查 + 迁移
@@ -400,6 +402,12 @@ class KnoweServer:
         if self.store is not None:
             identity_store.configure(self.data_root)
         self.hub = Hub(store=self.store)
+        self._file_library = None
+        if self.store is not None:
+            async def observe_library(event):
+                if event.get("files") or event.get("attachments"):
+                    await asyncio.to_thread(record_library_event, self, event)
+            self.hub.event_listeners.append(observe_library)
         self.engines: dict[str, ProjectEngine] = {}
         self.platform: ProjectEngine | None = None   # [v0.4] 知知常驻的平台引擎
         # [v1.0.13 R1] Process-local serialization plus durable history/event-id
@@ -2732,11 +2740,12 @@ class KnoweServer:
         # [v1.0.19.4] 用户附件（本地文件的路径 + 身份 + HMAC 签名；字节此刻还没读）。
         attachments_in = data.get("attachments")
         att_records = [a for a in attachments_in if isinstance(a, dict)] if isinstance(attachments_in, list) else []
+        selected_skills = data.get("skills")
 
         # [v0.37] 群内私聊：dm:{group}:{agent} → 走私聊路由（回复只发私聊频道，不进群）。
         dm = _parse_dm(project_id)
         if dm is not None:
-            await self._cmd_user_message_dm(client, project_id, dm[0], dm[1], content, cmid, att_records, fwd)
+            await self._cmd_user_message_dm(client, project_id, dm[0], dm[1], content, cmid, att_records, fwd, selected_skills)
             return
 
         project_id = self._canonical_project_id_from_request(project_id)
@@ -2803,6 +2812,14 @@ class KnoweServer:
         #     「包含 Worker 提及 → 这条消息不走项目经理」，避免项目经理再次转派造成重复执行。
         #
         # 未知/歧义 @ 不报错、不猜人：没有 Worker 命中时自然回落项目经理，和老版本行为一致。
+        try:
+            from .skill_tools import selected_skill_context
+            skill_context = await asyncio.to_thread(selected_skill_context, eng, selected_skills)
+        except ValueError as exc:
+            await self.hub.emit(project_id, {"type": "error", "agent_id": COORDINATOR, "message": str(exc)})
+            return
+        if skill_context:
+            llm_content += "\n\n" + skill_context
         mentions = eng.resolve_group_mentions(content)
         if mentions.worker_ids:
             calls = [
@@ -2875,6 +2892,7 @@ class KnoweServer:
         self, client: Client, dm_id: str, group_req: str, agent_id: str,
         content: str, cmid: Any, att_records: list[Any] | None = None,
         fwd: dict[str, Any] | None = None,
+        selected_skills: Any = None,
     ) -> None:
         """一条私聊消息：user_echo + 该成员的回复都只发 dm 频道；记忆按真项目路由。"""
         # 所属群 → 真项目 id（可能是别名/临时 id）。解析不出就报错，绝不新建项目。
@@ -2934,6 +2952,14 @@ class KnoweServer:
                 original=fwd.get("originalText") or "",
                 comment=content,
             )
+        try:
+            from .skill_tools import selected_skill_context
+            skill_context = await asyncio.to_thread(selected_skill_context, eng, selected_skills)
+        except ValueError as exc:
+            await self.hub.emit(dm_id, {"type": "error", "agent_id": agent_id, "message": str(exc)})
+            return
+        if skill_context:
+            dm_content += "\n\n" + skill_context
         await eng.submit_dm(agent_id, dm_content, dm_id, attachments=dm_parts)
 
     # ── [v0.13 3b] 项目目录恢复/取消（前端系统弹窗回传） ──
@@ -4063,6 +4089,10 @@ class KnoweServer:
                 allowed_methods = {"GET"}
             if allowed_methods is None and path.startswith("/api/knowledge"):
                 allowed_methods = {"GET", "POST"}
+            if allowed_methods is None and path.startswith("/api/extensions/"):
+                allowed_methods = {"GET", "POST"}
+            if allowed_methods is None and path.startswith("/api/library"):
+                allowed_methods = {"GET", "POST"}
 
             try:
                 if method == "OPTIONS":
@@ -4113,7 +4143,8 @@ class KnoweServer:
                         )
                         await writer.drain()
                         return
-                    if content_length > 1_000_000:
+                    body_limit = 45 * 1024 * 1024 if path == "/api/extensions/skills/prepare" else 1_000_000
+                    if content_length > body_limit:
                         self._write_http(
                             writer,
                             b"413 Payload Too Large",
@@ -4144,10 +4175,13 @@ class KnoweServer:
                     self._shutdown_event.set()
                     return
 
-                if path.startswith("/api/knowledge"):
-                    response = await dispatch_knowledge_http(
-                        method, path, split.query, body_bytes,
-                    )
+                if path.startswith(("/api/knowledge", "/api/extensions/", "/api/library")):
+                    if path.startswith("/api/library"):
+                        response = await dispatch_library_http(self, method, path, split.query, body_bytes)
+                    elif path.startswith("/api/extensions/"):
+                        response = await dispatch_extensions_http(method, path, body_bytes)
+                    else:
+                        response = await dispatch_knowledge_http(method, path, split.query, body_bytes)
                     status = {
                         200: b"200 OK", 400: b"400 Bad Request", 404: b"404 Not Found",
                         405: b"405 Method Not Allowed", 413: b"413 Payload Too Large",
@@ -5852,6 +5886,22 @@ class KnoweServer:
         project looking for a matching inode: once the file leaves its original parent,
         the UI must report that it is no longer at the original location.
         """
+        if project_id == "__library__":
+            from .file_library import _regular
+            parts = rel_path.replace("\\", "/").split("/")
+            if any(part in {"", ".", ".."} for part in parts):
+                raise ValueError("资料路径无效")
+            target, record = library_for(self).resolve(parts[0])
+            if len(parts) > 1:
+                candidate = target.parent.joinpath(*parts[1:])
+                if candidate != target:
+                    if not record["managed"]:
+                        raise ValueError("外部资料只能预览已引用的文件")
+                    target = _regular(candidate, target.parent)
+            meta = self._preview_file_meta(target.parent, target, source_path=rel_path)
+            meta.update(path=parts[0] + "/" + "/".join(parts[1:] or [target.name]),
+                        source_path=rel_path, renamed=False)
+            return project_id, target, meta
         canonical = self._canonical_project_id_from_request(project_id)
         eng = self.engines.get(canonical) or self.engines.get(project_id)
         if eng is None:
@@ -6252,13 +6302,14 @@ class KnoweServer:
             return
 
         ctype = _preview_content_type(target.name)
+        disposition = "attachment" if parse_qs(query).get("download") == ["1"] else "inline"
         self._write_http(
             writer,
             b"200 OK",
             data,
             ctype.encode(),
             extra=(
-                b"Content-Disposition: inline\r\n" +
+                f"Content-Disposition: {disposition}; filename*=UTF-8''{quote(target.name, safe='')}\r\n".encode() +
                 b"X-Content-Type-Options: nosniff\r\n"
             ),
         )
@@ -6647,6 +6698,8 @@ class KnoweServer:
                         task.cancel()
                 await asyncio.gather(*stop_tasks, return_exceptions=True)
 
+            from .mcp_service import close_managers
+            await close_managers()
             purge_tasks = list(self._purge_tasks)
             if purge_tasks:
                 try:

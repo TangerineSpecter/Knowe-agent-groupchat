@@ -76,6 +76,16 @@ async def test_directory_traversal_upload_and_signed_download(tmp_path, monkeypa
         assert await downloaded.read() == b'hello world'
         assert 'attachment' in downloaded.headers['Content-Disposition']
         assert (await client.get('/api/web/attachments', params={'path': file['path'], 'sig': 'fake'})).status == 403
+        from backend.file_library import FileLibrary
+        library = FileLibrary(cfg.data)
+        entry = library.listing()['items'][0]
+        download = await client.get('/api/web/library/download', params={'id': entry['id']})
+        assert download.status == 200 and await download.read() == b'hello world'
+        assert 'filename*=' in download.headers['Content-Disposition']
+        assert (await client.post('/api/web/uploads/discard', json={'path': file['path'], 'sig': 'bad'}, headers={'Origin': origin})).status == 403
+        removed = await client.post('/api/web/uploads/discard', json=file, headers={'Origin': origin})
+        assert removed.status == 200 and (await removed.json())['removed'] is True
+        assert not Path(file['path']).exists()
 
 
 @pytest.mark.asyncio

@@ -21,10 +21,10 @@ def worker_registry_names() -> tuple[str, ...]:
     return tuple(tools_knowe.build_worker_registry(FakeEngine(), "be_1").names())
 
 
-def test_registry_is_the_exact_fixed_19_without_completion_pseudotools() -> None:
+def test_registry_is_the_canonical_set_without_completion_pseudotools() -> None:
     names = worker_registry_names()
     assert names == WORKER_TOOL_NAMES
-    assert len(names) == 19
+    assert len(names) == 25
     assert "submit_report" not in names
     assert "speak" not in names
     assert "read_result_ref" not in names
@@ -46,7 +46,7 @@ def test_prompt_requires_native_provider_tool_calls() -> None:
 
 def test_prompt_describes_fixed_visibility_and_stable_unavailability() -> None:
     prompt = PROMPT.read_text("utf-8")
-    assert "same 19 tools remain available on every turn" in prompt
+    assert "same canonical tools remain available on every turn" in prompt
     assert "service can be unavailable" in prompt
     assert "Do not invent another tool" in prompt
 

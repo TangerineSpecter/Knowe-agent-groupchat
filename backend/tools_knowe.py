@@ -1660,6 +1660,10 @@ def build_coordinator_registry(engine: "ProjectEngine") -> ToolRegistry:
     _register_knowledge_readonly(reg, engine, role="coordinator")
     _register_coordinator_eyes(reg, engine)          # [v0.29 问题三] 他自己有眼睛
     _register_external_readonly(reg, engine, role="coordinator")
+    from .skill_tools import register_skill_tools
+    register_skill_tools(reg, engine, _register)
+    from .mcp_tools import register_mcp_tools
+    register_mcp_tools(reg, _register, allow_call=False)
     return reg
 
 
@@ -2454,7 +2458,7 @@ def build_worker_registry(
     """Register the exact fixed Worker toolset in canonical provider order.
 
     Service readiness is checked inside handlers.  It never changes tool names, order, or
-    schemas, so every Provider turn receives the same 19 definitions.
+    schemas, so every Provider turn receives the same canonical definitions.
     """
 
     reg = registry if registry is not None else ToolRegistry()
@@ -3624,6 +3628,10 @@ def build_worker_registry(
         handler=handle_browser_screenshot,
     )
 
+    from .skill_tools import register_skill_tools
+    register_skill_tools(reg, engine, _register)
+    from .mcp_tools import register_mcp_tools
+    register_mcp_tools(reg, _register)
     names = tuple(reg.names())
     if names != WORKER_TOOL_NAMES:
         raise RuntimeError(

@@ -62,8 +62,10 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability(
         "cap.009",
         "cap.010",
-        WORKER_TOOL_NAMES[12:],
+        WORKER_TOOL_NAMES[12:19],
     ),
+    Capability("cap.skills.title", "cap.skills.description", WORKER_TOOL_NAMES[19:23]),
+    Capability("cap.mcp.title", "cap.mcp.description", WORKER_TOOL_NAMES[23:]),
 )
 
 
