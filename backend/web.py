@@ -7,15 +7,17 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import os
+import re
 import secrets
 import signal
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from aiohttp import ClientError, ClientSession, ClientTimeout, WSMsgType, web
 
@@ -26,6 +28,47 @@ log = logging.getLogger('knowe.web')
 COOKIE = 'knowe_session'
 SESSION_SECONDS = 7 * 24 * 3600
 MAX_UPLOAD = 64 * 1024 * 1024
+
+
+def diagnostic_origin(value: str | None) -> dict:
+    """Log only a validated origin tuple, never raw untrusted header contents.
+
+    This is diagnostic normalization only; authentication uses the original value.
+    """
+    if value is None:
+        return {'state': 'missing'}
+    if value == 'null':
+        return {'state': 'null'}
+    if not value:
+        return {'state': 'empty'}
+    if len(value) > 4096 or any(ord(c) < 33 or ord(c) > 126 for c in value):
+        return {'state': 'invalid'}
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        if (parsed.scheme not in {'http', 'https'} or not host
+                or parsed.username is not None or parsed.password is not None):
+            return {'state': 'invalid'}
+        if ':' in host:
+            host = str(ipaddress.IPv6Address(host)) if '%' not in host else ''
+        elif not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?', host):
+            return {'state': 'invalid'}
+        if not host:
+            return {'state': 'invalid'}
+        port = parsed.port
+        return {'state': 'valid', 'scheme': parsed.scheme, 'host': host,
+                'port': port if port is not None else (443 if parsed.scheme == 'https' else 80)}
+    except ValueError:
+        return {'state': 'invalid'}
+
+
+def log_origin_rejection(request: web.Request, config: WebConfig) -> None:
+    # No path, query, body, credentials, cookies or arbitrary forwarded headers.
+    details = {'origin': diagnostic_origin(request.headers.get('Origin')),
+               'server': diagnostic_origin(f'{request.scheme}://{request.host}'),
+               'configured': bool(config.public_origin),
+               'expected': diagnostic_origin(config.public_origin or f'{request.scheme}://{request.host}')}
+    log.warning('origin_rejected %s', json.dumps(details, ensure_ascii=True, sort_keys=True))
 
 
 def persistent_secret(data: Path, name: str) -> str:
@@ -104,6 +147,7 @@ def create_app(config: WebConfig, runtime=None, runtime_stopped: asyncio.Event |
                     raise web.HTTPUnauthorized(text='登录已过期，请重新登录')
             if api and (request.method not in {'GET', 'HEAD'} or request.path == '/api/runtime/ws'):
                 if not config.same_origin(request):
+                    log_origin_rejection(request, config)
                     raise web.HTTPForbidden(text='请求来源不匹配，请从部署地址重新打开页面')
             response = await handler(request)
         except (ValueError, OSError) as exc:
