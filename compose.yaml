@@ -19,6 +19,7 @@ services:
       - "${KNOWE_BIND_HOST:-0.0.0.0}:${KNOWE_PORT:-18090}:8090"
     environment:
       KNOWE_WEB_PASSWORD_FILE: /run/secrets/web_password
+      KNOWE_WEB_ZSPACE_COMPAT: "${KNOWE_WEB_ZSPACE_COMPAT:-0}"
       KNOWE_WEB_ORIGIN: "${KNOWE_WEB_ORIGIN:-}"
       KNOWE_WEB_SECURE_COOKIE: "${KNOWE_WEB_SECURE_COOKIE:-0}"
       TZ: "${TZ:-Asia/Shanghai}"
