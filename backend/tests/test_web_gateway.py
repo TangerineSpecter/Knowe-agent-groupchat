@@ -349,3 +349,52 @@ async def test_json_api_rejects_non_objects_and_chunked_oversize_body(tmp_path):
         await login(client)
         response = await client.post('/api/web/notifications/read', json=[], headers={'Origin': origin})
         assert response.status == 400
+
+
+@pytest.mark.parametrize(('value', 'expected'), [
+    (None, {'state': 'missing'}), ('null', {'state': 'null'}), ('', {'state': 'empty'}),
+    ('HTTPS://Example.COM:8443/private?token=secret#fragment',
+     {'state': 'valid', 'scheme': 'https', 'host': 'example.com', 'port': 8443}),
+    ('http://localhost', {'state': 'valid', 'scheme': 'http', 'host': 'localhost', 'port': 80}),
+    ('https://[::1]', {'state': 'valid', 'scheme': 'https', 'host': '::1', 'port': 443}),
+    *[(value, {'state': 'invalid'}) for value in [
+        'https://user:password@example.com', 'https://example.com\nforged',
+        'https://example.com\r\nAuthorization:secret', 'https://example.com:bad',
+        'https://example.com:99999', 'https://[broken', 'https://%secret',
+        'https://[fe80::1%secret]', 'file:///private', 'https://a https://b',
+        'https://example.com/' + 's' * 4096,
+    ]],
+])
+def test_diagnostic_origin_redaction(value, expected):
+    from backend.web import diagnostic_origin
+    assert diagnostic_origin(value) == expected
+
+
+@pytest.mark.asyncio
+async def test_origin_rejection_log_is_safe_and_auth_unchanged(tmp_path, caplog):
+    import json
+    cfg = config(tmp_path, public_origin='https://expected.example')
+    async with TestClient(TestServer(create_app(cfg))) as client:
+        for origin, state in [(None, 'missing'), ('null', 'null'),
+                              ('https://remote.example:8443/private?token=secret-query', 'valid')]:
+            headers = {'Authorization': 'Bearer secret-auth', 'Cookie': 'private=secret-cookie'}
+            if origin is not None:
+                headers['Origin'] = origin
+            response = await client.post('/api/web/login?token=secret-request',
+                                         json={'password': cfg.password}, headers=headers)
+            assert response.status == 403
+            assert (await response.json())['error'] == '请求来源不匹配，请从部署地址重新打开页面'
+            record = [r.message for r in caplog.records if 'origin_rejected ' in r.message][-1]
+            details = json.loads(record.split('origin_rejected ', 1)[1])
+            assert details['origin']['state'] == state
+            assert details['configured'] is True
+            assert details['expected']['host'] == 'expected.example'
+            assert details['server']['host'] == '127.0.0.1'
+            for secret in ['secret-query', 'secret-request', 'secret-auth', 'secret-cookie',
+                           cfg.password, '/private', 'Authorization']:
+                assert secret not in record
+        caplog.clear()
+        response = await client.post('/api/web/login', json={'password': cfg.password},
+                                     headers={'Origin': cfg.public_origin})
+        assert response.status == 200
+        assert not any('origin_rejected ' in r.message for r in caplog.records)
