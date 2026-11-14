@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/components/knowledge-view.css"
+        ],
+        "createdAt": "2026-11-14T02:00:10.380Z",
+        "reason": "Reviewer verified line 274 styles Markdown blockquote, not a card accent; identical in pre-change commit 220d69a. Preserve semantic quotation styling."
+      }
+    ]
+  }
+}
