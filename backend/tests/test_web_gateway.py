@@ -349,3 +349,141 @@ async def test_json_api_rejects_non_objects_and_chunked_oversize_body(tmp_path):
         await login(client)
         response = await client.post('/api/web/notifications/read', json=[], headers={'Origin': origin})
         assert response.status == 400
+
+
+@pytest.mark.parametrize(('value', 'expected'), [
+    (None, {'state': 'missing'}), ('null', {'state': 'null'}), ('', {'state': 'empty'}),
+    ('HTTPS://Example.COM:8443/private?token=secret#fragment',
+     {'state': 'valid', 'scheme': 'https', 'host': 'example.com', 'port': 8443}),
+    ('http://localhost', {'state': 'valid', 'scheme': 'http', 'host': 'localhost', 'port': 80}),
+    ('https://[::1]', {'state': 'valid', 'scheme': 'https', 'host': '::1', 'port': 443}),
+    *[(value, {'state': 'invalid'}) for value in [
+        'https://user:password@example.com', 'https://example.com\nforged',
+        'https://example.com\r\nAuthorization:secret', 'https://example.com:bad',
+        'https://example.com:99999', 'https://[broken', 'https://%secret',
+        'https://[fe80::1%secret]', 'file:///private', 'https://a https://b',
+        'https://example.com/' + 's' * 4096,
+    ]],
+])
+def test_diagnostic_origin_redaction(value, expected):
+    from backend.web import diagnostic_origin
+    assert diagnostic_origin(value) == expected
+
+
+@pytest.mark.asyncio
+async def test_origin_rejection_log_is_safe_and_auth_unchanged(tmp_path, caplog):
+    import json
+    cfg = config(tmp_path, public_origin='https://expected.example')
+    async with TestClient(TestServer(create_app(cfg))) as client:
+        for origin, state in [(None, 'missing'), ('null', 'null'),
+                              ('https://remote.example:8443/private?token=secret-query', 'valid')]:
+            headers = {'Authorization': 'Bearer secret-auth', 'Cookie': 'private=secret-cookie'}
+            if origin is not None:
+                headers['Origin'] = origin
+            response = await client.post('/api/web/login?token=secret-request',
+                                         json={'password': cfg.password}, headers=headers)
+            assert response.status == 403
+            assert (await response.json())['error'] == '请求来源不匹配，请从部署地址重新打开页面'
+            record = [r.message for r in caplog.records if 'origin_rejected ' in r.message][-1]
+            details = json.loads(record.split('origin_rejected ', 1)[1])
+            assert details['origin']['state'] == state
+            assert details['configured'] is True
+            assert details['expected']['host'] == 'expected.example'
+            assert details['server']['host'] == '127.0.0.1'
+            for secret in ['secret-query', 'secret-request', 'secret-auth', 'secret-cookie',
+                           cfg.password, '/private', 'Authorization']:
+                assert secret not in record
+        caplog.clear()
+        response = await client.post('/api/web/login', json={'password': cfg.password},
+                                     headers={'Origin': cfg.public_origin})
+        assert response.status == 200
+        assert not any('origin_rejected ' in r.message for r in caplog.records)
+
+
+@pytest.mark.parametrize('origin', [
+    '', 'null', 'http://127.0.0.1', 'https://127.0.0.1:20000',
+    'http://localhost:20000', 'http://127.0.0.2:20000', 'http://[::1]:20000',
+    'http://127.0.0.1:0', 'http://127.0.0.1:65536', 'http://127.0.0.1:020000',
+    'http://127.0.0.1:-1', 'http://127.0.0.1:20000/', 'http://127.0.0.1:20000?q=x',
+    'http://127.0.0.1:20000#x', 'http://user@127.0.0.1:20000',
+    'http://127.0.0.1.evil:20000', 'http://127.0.0.1:20000@evil',
+    'http://2130706433:20000', 'http://127.0.0.1:20000\n',
+    'http://127.0.0.1:20000 https://evil.invalid',
+])
+def test_zspace_origin_rejects_other_forms(tmp_path, origin):
+    from aiohttp.test_utils import make_mocked_request
+    cfg = config(tmp_path, zspace_loopback_compat=True)
+    assert not cfg.same_origin(make_mocked_request('POST', '/api/web/login', headers={
+        'Host': '192.168.5.113:18090', 'Origin': origin}))
+
+
+@pytest.mark.parametrize('port', [1, 20000, 23456, 65535])
+def test_zspace_requires_opt_in_and_preserves_deployment_origin(tmp_path, port):
+    from aiohttp.test_utils import make_mocked_request
+    request = make_mocked_request('POST', '/api/web/login', headers={
+        'Host': '192.168.5.113:18090', 'Origin': f'http://127.0.0.1:{port}'})
+    cfg = config(tmp_path)
+    assert not cfg.same_origin(request)
+    assert replace(cfg, zspace_loopback_compat=True).same_origin(request)
+    cfg = replace(cfg, public_origin='https://knowe.example', zspace_loopback_compat=True)
+    assert cfg.same_origin(request)
+    assert cfg.same_origin(make_mocked_request('POST', '/api/web/login', headers={
+        'Host': '192.168.5.113:18090', 'Origin': cfg.public_origin}))
+
+
+@pytest.mark.asyncio
+async def test_zspace_login_upload_ws_logout_and_lan(tmp_path):
+    async def echo(request):
+        socket = web.WebSocketResponse()
+        await socket.prepare(request)
+        async for message in socket:
+            await socket.send_str(message.data)
+        return socket
+    upstream_app = web.Application()
+    upstream_app.router.add_get('/ws', echo)
+    async with TestServer(upstream_app) as upstream:
+        cfg = config(tmp_path, zspace_loopback_compat=True,
+                     ws_url=str(upstream.make_url('/ws')).replace('http:', 'ws:'))
+        async with TestClient(TestServer(create_app(cfg))) as client:
+            remote = 'http://127.0.0.1:20000'
+            assert (await client.post('/api/web/uploads', headers={'Origin': remote})).status == 401
+            with pytest.raises(aiohttp.WSServerHandshakeError) as error:
+                await client.ws_connect('/api/runtime/ws', origin=remote)
+            assert error.value.status == 401
+            assert (await client.post('/api/web/login', json={'password': 'bad'},
+                                      headers={'Origin': remote})).status == 401
+            result = await client.post('/api/web/login', json={'password': cfg.password},
+                                       headers={'Origin': remote})
+            assert result.status == 200
+            assert 'HttpOnly' in result.headers['Set-Cookie']
+            assert 'SameSite=Strict' in result.headers['Set-Cookie']
+            assert (await (await client.get('/api/web/session')).json())['authenticated']
+            for origin in [None, 'null', 'https://evil.invalid', 'http://127.0.0.2:20000']:
+                headers = {} if origin is None else {'Origin': origin}
+                assert (await client.post('/api/web/logout', headers=headers)).status == 403
+                with pytest.raises(aiohttp.WSServerHandshakeError) as error:
+                    await client.ws_connect('/api/runtime/ws', headers=headers)
+                assert error.value.status == 403
+            # The trusted proxy may select a new port without changing configuration.
+            for origin in [remote, 'http://127.0.0.1:23456']:
+                form = aiohttp.FormData()
+                form.add_field('files', b'hello', filename='test.txt')
+                assert (await client.post('/api/web/uploads', data=form,
+                                          headers={'Origin': origin})).status == 200
+                connection = await client.ws_connect('/api/runtime/ws', origin=origin)
+                await connection.send_json({'type': 'ping'})
+                assert (await connection.receive(timeout=2)).json()['type'] == 'ping'
+                await connection.close()
+            connection = await client.ws_connect('/api/runtime/ws', origin=remote)
+            assert (await client.post('/api/web/logout', headers={'Origin': remote})).status == 200
+            assert (await connection.receive(timeout=2)).type == aiohttp.WSMsgType.CLOSE
+            assert not (await (await client.get('/api/web/session')).json())['authenticated']
+            lan = await login(client)
+            assert (await client.post('/api/web/logout', headers={'Origin': lan})).status == 200
+
+
+def test_zspace_compose_default_is_disabled():
+    import yaml
+    root = Path(__file__).resolve().parents[2]
+    compose = yaml.safe_load((root / 'compose.yaml').read_text())
+    assert compose['services']['knowe']['environment']['KNOWE_WEB_ZSPACE_COMPAT'] == '${KNOWE_WEB_ZSPACE_COMPAT:-0}'
