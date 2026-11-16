@@ -44,7 +44,9 @@
  *   从 hast 子树递归收集文本数行数，在代码左边渲染一根号码带（.ln）。
  */
 
-import React, { useMemo } from 'react';
+import React, { lazy, Suspense, useMemo } from 'react';
+import { parseChart, type ChartSpec } from './chartSpec';
+
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
@@ -54,10 +56,13 @@ import remarkRehype from 'remark-rehype';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import rehypeStringify from 'rehype-stringify';
+import type { Root } from 'hast';
 import { visit } from 'unist-util-visit';
 
 // KaTeX 的样式表。放在这儿而不是 main.tsx：谁用谁带，删掉这个组件就一起干净。
 import 'katex/dist/katex.min.css';
+
+const InlineChart = lazy(() => import('./InlineChart'));
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type AnyNode = any;
@@ -151,23 +156,54 @@ function rehypeExternalLinks(): (tree: AnyNode) => void {
  * [v1.0.23.15] rehype-highlight detect:false——实测自动语言检测贡献 ~70% 解析成本
  * （每段未标语言的代码块对所有注册语言评分）。未标注语言 = 不高亮，标了语言的照常。
  */
-let _processor: any = null;
-function getProcessor(): any {
-  if (!_processor) {
-    _processor = unified()
+interface ChartBlock { source: string; spec: ChartSpec }
+type MarkdownBlock = string | ChartBlock;
+interface RenderedMarkdown { blocks: MarkdownBlock[]; hasChart: boolean }
+
+// Keep the validated spec on the actual top-level node while the rest of the
+// document passes through highlighting, math, and link transforms.
+function rehypeCharts() {
+  return (tree: Root) => {
+    for (const node of tree.children) {
+      if (node.type !== 'element' || node.tagName !== 'pre') continue;
+      const code = node.children[0];
+      if (code?.type !== 'element' || code.tagName !== 'code') continue;
+      const classes = code.properties.className;
+      if (!Array.isArray(classes) || !classes.includes('language-knowe-chart')) continue;
+      const source = collectText(code).trim();
+      const spec = parseChart(source);
+      if (spec) {
+        node.data = { ...node.data, chartBlock: { source, spec } };
+        node.children = [];
+      }
+    }
+  };
+}
+
+declare module 'hast' {
+  interface ElementData { chartBlock?: ChartBlock }
+}
+
+const processors = new Map<boolean, any>();
+function getProcessor(charts: boolean): any {
+  if (!processors.has(charts)) {
+    const processor = unified()
       .use(remarkParse)
       .use(remarkGfm)
       .use(remarkMath)
       .use(remarkBreaks)
-      .use(remarkRehype)
+      .use(remarkRehype);
+    if (charts) processor.use(rehypeCharts);
+    processor
       .use(rehypeHighlight as any, { detect: false, ignoreMissing: true })
       .use(rehypeKatex as any, { throwOnError: false, errorColor: '#e0245e', strict: 'ignore' })
       .use(rehypeLineGutter as any)
       .use(rehypeTableWrap as any)
       .use(rehypeExternalLinks as any)
       .use(rehypeStringify as any);
+    processors.set(charts, processor);
   }
-  return _processor;
+  return processors.get(charts);
 }
 
 /**
@@ -175,27 +211,52 @@ function getProcessor(): any {
  * 缓存 key = normalizeMath 后的源文本；命中 = 零管道执行。
  * LRU 上限 300 条（Map 保持插入序，超限淘汰最久未用）。
  */
-const _MD_HTML_CACHE = new Map<string, string>();
+const _MD_HTML_CACHE = new Map<string, RenderedMarkdown>();
 const _MD_CACHE_MAX = 300;
 
-function mdToHtml(src: string): string {
-  const hit = _MD_HTML_CACHE.get(src);
+export function prepareMarkdown(text: string, enableCharts = false): RenderedMarkdown {
+  const src = normalizeMath(text);
+  const charts = enableCharts && src.includes('knowe-chart');
+  const key = (charts ? "1" : "0") + src;
+  const hit = _MD_HTML_CACHE.get(key);
   if (hit !== undefined) {
-    _MD_HTML_CACHE.delete(src);
-    _MD_HTML_CACHE.set(src, hit);
+    _MD_HTML_CACHE.delete(key);
+    _MD_HTML_CACHE.set(key, hit);
     return hit;
   }
-  const html = String(getProcessor().processSync(src));
-  _MD_HTML_CACHE.set(src, html);
+  const processor = getProcessor(charts);
+  const tree: Root = processor.runSync(processor.parse(src));
+  const blocks: MarkdownBlock[] = [];
+  let start = 0;
+  if (charts) {
+    for (const [index, node] of tree.children.entries()) {
+      const chart = node.type === 'element' && node.data?.chartBlock;
+      if (!chart) continue;
+      if (index > start) {
+        blocks.push(processor.stringify({ type: 'root', children: tree.children.slice(start, index) }));
+      }
+      blocks.push(chart);
+      start = index + 1;
+    }
+  }
+  const hasChart = start > 0;
+  if (!hasChart) {
+    blocks.push(processor.stringify(tree));
+  } else if (start < tree.children.length) {
+    blocks.push(processor.stringify({ type: 'root', children: tree.children.slice(start) }));
+  }
+  const result = { blocks, hasChart };
+  _MD_HTML_CACHE.set(key, result);
   if (_MD_HTML_CACHE.size > _MD_CACHE_MAX) {
     const oldest = _MD_HTML_CACHE.keys().next().value;
     if (oldest !== undefined) _MD_HTML_CACHE.delete(oldest);
   }
-  return html;
+  return result;
 }
 
 export interface MarkdownProps {
   text: string;
+  charts?: boolean;
 }
 
 /**
@@ -204,16 +265,25 @@ export interface MarkdownProps {
  * 流式期间每来一个 token 就重渲染一次气泡；KaTeX 解析一条公式要毫秒级。
  * 文本没变就不重算——而流式里文本每次都在变，那也只重算**这一颗**气泡。
  *
- * [v1.0.23.15] 双层墙：memo 挡「同一气泡重复渲染」，mdToHtml 缓存挡
+ * [v1.0.23.15] 双层墙：memo 挡「同一气泡重复渲染」，prepareMarkdown 缓存挡
  * 「同一文本跨挂载重复解析」。dangerouslySetInnerHTML 一次性设置，
  * 无 React 组件树开销（对比 ReactMarkdown 的组件渲染）。
  */
-export const Markdown: React.FC<MarkdownProps> = React.memo(({ text }) => {
-  const html = useMemo(() => mdToHtml(normalizeMath(text || '')), [text]);
+export const MarkdownContent = React.memo(({ document }: { document: RenderedMarkdown }) => (
+  <>{document.blocks.map((block, i) => {
+    if (typeof block === 'string') {
+      if (document.hasChart && !block.trim()) return null;
+      return <div key={i} className="md" dangerouslySetInnerHTML={{ __html: block }} />;
+    }
+    return <Suspense key={i} fallback={<span>{block.spec.title}</span>}>
+      <InlineChart {...block} />
+    </Suspense>;
+  })}</>
+));
 
-  return (
-    <div className="md" dangerouslySetInnerHTML={{ __html: html }} />
-  );
+export const Markdown: React.FC<MarkdownProps> = React.memo(({ text, charts = false }) => {
+  const document = useMemo(() => prepareMarkdown(text, charts), [text, charts]);
+  return <MarkdownContent document={document} />;
 });
 
 Markdown.displayName = 'Markdown';

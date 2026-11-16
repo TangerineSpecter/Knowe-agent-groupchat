@@ -19,6 +19,7 @@ prompt_resolver.py — [v1.0.21.3] 按语言选择提示词模板。
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from pathlib import Path
 
 from . import runtime_settings
@@ -98,3 +99,10 @@ def resolve_prompt_path(filename: str, *, lang: str | None = None) -> Path | Non
     lng = _norm_lang(lang)
     target = _PROMPTS / lng / filename
     return target if target.is_file() else None
+
+
+@lru_cache(maxsize=1)
+def inline_chart_guidance() -> str:
+    """Public reply format shared by reception, coordinator and worker prompts."""
+    skill = Path(__file__).parent / "skills" / "inline-charts" / "SKILL.md"
+    return skill.read_text(encoding="utf-8").split("---", 2)[-1].strip()

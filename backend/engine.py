@@ -4884,6 +4884,7 @@ class ProjectEngine:
         agent.ephemeral_system_prompt = (
             ((identity_context + "\n\n") if identity_context else "")
             + self.coordinator_soul
+            + "\n\n" + prompt_resolver.inline_chart_guidance()
             + "\n\n" + STATE_HEADER + "\n\n"
             + self._team_ctx()
             + "\n\n" + self._work_status_ctx()

@@ -52,6 +52,7 @@ from ..context_compressor import project_messages
 from ..config import CONFIG
 from ..attachments import inject_into_last_user
 from .. import browser_tools, web_tools
+from ..prompt_resolver import inline_chart_guidance
 from .. import runtime_settings   # [v0.44.3 场景1] 知知的模型绑定改从设置面板现取
 from ..agent_identity import zinnia_identity
 from ..feature_flags import FeatureFlag, enabled as feature_enabled
@@ -778,7 +779,7 @@ class ZinniaAgent:
             else ""
         )
         system_prompt = "\n\n".join(
-            part for part in (identity_prompt, _read_prompt_file("zinnia_system_prompt.md"), self._context_block()) if part
+            part for part in (identity_prompt, _read_prompt_file("zinnia_system_prompt.md"), inline_chart_guidance(), self._context_block()) if part
         )
         authoritative: list[dict[str, Any]] = [
             dict(message) for message in turn.history if isinstance(message, dict)

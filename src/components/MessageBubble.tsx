@@ -16,11 +16,11 @@
  * [v0.8d #3] 长消息折叠：见 useFoldable()。
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCachedT } from '../i18n';
 import { assistantRoleLabel } from '../shared/roleLabel';
 import { Avatar } from './Avatar';
-import { Markdown } from './markdown';
+import { Markdown, MarkdownContent, prepareMarkdown } from './markdown';
 import { IconAlert, IconCheck, IconForward } from './icons';
 import { linkifyBareUrls, linkifyLineToNodes } from '../utils/links';
 import type { ProducedFile, AttachmentInput, ForwardMeta, SuggestionItem } from '../store/state';
@@ -93,7 +93,7 @@ function foldThreshold(): number {
  * ResizeObserver 是必须的：Markdown 里的表格、KaTeX 公式、代码高亮都是
  * **渲染完才知道多高**的，第一帧量到的高度是骗人的。
  */
-function useFoldable(text: string): {
+function useFoldable(text: string, expandByDefault: boolean): {
   bodyRef: React.RefObject<HTMLDivElement>;
   foldable: boolean;
   folded: boolean;
@@ -101,7 +101,8 @@ function useFoldable(text: string): {
 } {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [foldable, setFoldable] = useState(false);
-  const [folded, setFolded] = useState(true);      // 一旦判定为长 → 默认折着
+  const [foldChoice, setFolded] = useState<boolean | null>(null);
+  const folded = foldChoice ?? !expandByDefault;
 
   const measure = useCallback(() => {
     const el = bodyRef.current;
@@ -200,6 +201,7 @@ const FoldableBubble: React.FC<{
   className: string;
   text: string;
   children: React.ReactNode;
+  expandByDefault?: boolean;
   /** [v1.0.23.3] 气泡内第一段（推理面板，渲染在正文前）。 */
   before?: React.ReactNode;
   /** [v1.0.23.3] 气泡内第三段（四方向卡片，渲染在正文后、折叠把手前）。 */
@@ -208,9 +210,9 @@ const FoldableBubble: React.FC<{
   streaming?: boolean;
   /** [v1.0.23.4] 流式累积推理文本（有值 → 推理面板 live；无 → 三点动画）。 */
   streamingReasoning?: string;
-}> = ({ className, text, children, before, after, streaming = false, streamingReasoning }) => {
+}> = ({ className, text, children, before, after, expandByDefault = false, streaming = false, streamingReasoning }) => {
   const { t } = useCachedT();
-  const { bodyRef, foldable, folded, toggle } = useFoldable(text);
+  const { bodyRef, foldable, folded, toggle } = useFoldable(text, expandByDefault);
 
   return (
     <div
@@ -383,6 +385,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(
 }) => {
   const { t } = useCachedT();
 
+  const document = useMemo(
+    () => kind === 'agent' && text ? prepareMarkdown(linkifyBareUrls(text), true) : null,
+    [kind, text],
+  );
+
   // [v1.0.23.4] transient frame 首帧保护（原 StreamBubble 职责，统一壳后在此回执）
   useEffect(() => {
     if (!frameId || !onFramePaint) return undefined;
@@ -426,7 +433,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(
     //   原逻辑：markdown 原文按 Markdown 渲染（兼容 v0.40.1 时代的转发气泡）。
     const isNewForward = forwarded?.comment !== undefined;
     const userBody = !isNewForward && forwarded?.markdown
-      ? <Markdown text={linkifyBareUrls(text)} />
+      ? <Markdown charts text={linkifyBareUrls(text)} />
       : text.split('\n').map((line, i) => (
         <React.Fragment key={i}>{i > 0 && <br />}{linkifyLineToNodes(line, `l${i}-`)}</React.Fragment>
       ));
@@ -443,7 +450,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(
           <div className="fwd-quote-b">
             {/* [v1.0.23.2] 原文一律 Markdown 渲染（不再看 forwarded.markdown 标志——
                 用户原文里的 **加粗**、# 标题等符号不再裸露，Markdown 对纯文本同样安全） */}
-            <Markdown text={linkifyBareUrls(forwarded.originalText)} />
+            <Markdown charts={forwarded.markdown} text={linkifyBareUrls(forwarded.originalText)} />
           </div>
         )}
         {/* [v1.0.23.1] 被转发文件卡移进引用窗（文件属于被转发内容，不属于配言） */}
@@ -554,6 +561,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(
             <FoldableBubble
               className={'bubble agent' + (tail ? ' tail' : '')}
               text={text}
+              expandByDefault={document?.hasChart}
               before={reasoning ? (
                 <ReasoningPanel text={reasoning} seconds={reasoningSeconds} initiallyExpanded={forceReasoningOpen} />
               ) : undefined}
@@ -566,7 +574,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(
               {/* [v0.5 #4] agent 的回复走 Markdown（加粗/列表/代码块/换行）。
                  [v0.8d #3] 太长就折起来：几十行代码 + 一张表 + 一段长文，撑出去的那一屏
                  会把上文整个顶走——用户丢掉的是「刚才说到哪儿了」。 */}
-              {text ? <Markdown text={linkifyBareUrls(text)} /> : null}
+              {document && <MarkdownContent document={document} />}
             </FoldableBubble>
           ) : null}
           {files && files.length > 0 && (

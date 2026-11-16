@@ -1,0 +1,49 @@
+.inline-chart {
+  --slice-lightness: 44%;
+  --series-0: #185fa5;
+  --series-1: #d85a30;
+  --series-2: #36806e;
+  --series-3: #8165ab;
+  --series-4: #94701a;
+  --series-5: #ac5176;
+  box-sizing: border-box;
+  width: min(640px, 100%);
+  min-width: 0;
+  margin: .8em 0;
+  padding: 12px 14px 8px;
+  background: var(--surface, white);
+  color: var(--ink-2, #625f59);
+  border: 1px solid var(--hairline, #e8e7e4);
+  border-radius: 14px;
+  text-align: start;
+  white-space: normal;
+}
+.inline-chart header, .chart-legend, .chart-legend span {
+  display: flex;
+  align-items: center;
+}
+.inline-chart header { gap: 8px; justify-content: space-between; margin-bottom: 10px; }
+.chart-legend { gap: 4px 14px; flex-wrap: wrap; font-size: 12px; line-height: 1.5; }
+.chart-legend span { gap: 5px; overflow-wrap: anywhere; }
+.chart-legend svg { flex: none; }
+.inline-chart header button {
+  flex: none; padding: 3px 6px; border-radius: 5px;
+  color: inherit; background: transparent; font: inherit; font-size: 11px; cursor: pointer;
+}
+.inline-chart header button:hover { background: var(--surface-2); color: var(--ink); }
+.inline-chart :focus-visible { outline: 2px solid var(--accent, #185fa5); outline-offset: 2px; }
+.chart-plot { position: relative; height: clamp(180px, 28vw, 250px); }
+.inline-chart pre { max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inline-chart output { display: block; padding-top: 6px; font-variant-numeric: tabular-nums; }
+.m-content:has(.inline-chart) { width: min(100%, 680px); }
+.bubble:has(.inline-chart) { box-sizing: border-box; width: 100%; }
+
+html.dark .inline-chart {
+  --slice-lightness: 67%;
+  --series-0: #79b7ef;
+  --series-1: #f39572;
+  --series-2: #72cbb8;
+  --series-3: #bba1de;
+  --series-4: #dcc779;
+  --series-5: #e197b7;
+}

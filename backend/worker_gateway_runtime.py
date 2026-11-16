@@ -326,7 +326,7 @@ class WorkerRuntimeFactory:
         # [I-4] Only the wall-clock stop is configurable. No turn ceiling, no tool
         # error cap, no correction budget — those are the LLM's decisions.
         # [v1.0.21.3] 语言化：prompts/<lang>/worker_prompt.md 存在则用之，否则回退 prompts/en/。
-        from .prompt_resolver import resolve_prompt_path
+        from .prompt_resolver import inline_chart_guidance, resolve_prompt_path
         _resolved_prompt = resolve_prompt_path("worker_prompt.md")
         runtime_config = RuntimeConfig(
             timeout_seconds=timeout_seconds,
@@ -378,6 +378,7 @@ class WorkerRuntimeFactory:
         #   模型不知道「我是谁」，自我介绍时把 worklog 里的产品语境（"项目经理"）当身份。
         #   现在把身份块注入 prompt 最顶部：身份契约 > 通用纪律 > worklog 尾部。
         identity = getattr(agent, "ephemeral_system_prompt", "") or ""
+        runtime.prompt += "\n\n" + inline_chart_guidance()
         if identity:
             runtime.prompt = identity.rstrip() + "\n\n" + runtime.prompt
         return _inject_user_address_prompt(runtime, metadata)

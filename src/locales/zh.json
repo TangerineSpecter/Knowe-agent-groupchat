@@ -1,4 +1,9 @@
 {
+  "chart.total": "合计",
+  "chart.left": "左轴",
+  "chart.right": "右轴",
+  "chart.source": "查看代码",
+  "chart.show": "显示图表",
   "common.01": "图片",
   "common.02": "文件",
   "common.03": "重试",

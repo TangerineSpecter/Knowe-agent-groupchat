@@ -1,4 +1,9 @@
 {
+  "chart.total": "Total",
+  "chart.left": "left axis",
+  "chart.right": "right axis",
+  "chart.source": "View code",
+  "chart.show": "Show chart",
   "contacts.view.11": "In progress",
   "approval.card.02": "Cancelled",
   "contacts.view.12": "Archived",
